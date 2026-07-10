@@ -5,6 +5,7 @@ export default async function code(pi: ExtensionAPI) {
 	const load = getExtensionLoader(pi).from(import.meta.url).load;
 
 	await load("../skills/brainstorming.ts");
+	await load("../skills/test-driven-development.ts");
 	await load("../reasoning/reasoning.ts");
 	await load("../exa/exa-mcp.ts");
 	await load("../sub-agent/sub-agent.ts");
