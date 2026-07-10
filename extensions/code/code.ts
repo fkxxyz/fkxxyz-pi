@@ -10,6 +10,7 @@ export default async function code(pi: ExtensionAPI) {
 	await load("../exa/exa-mcp.ts");
 	await load("../sub-agent/sub-agent.ts");
 	await load("./apply-patch.ts");
+	await load("./lsp-tools.ts");
 	await load("./frontend-development.ts");
 	await load("./systematic-debugging.ts");
 	await load("../environment/shared-skill-discovery.ts");
