@@ -14,8 +14,14 @@ import { lstat, readdir, readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, extname, isAbsolute, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 const AGENTS_DIR = join(homedir(), "pi", "agents");
+const SUBAGENT_SKILL_PATHS = [
+  "../../skills/subagent-delegation-verification",
+  "../../skills/subagent-prompt-simplification",
+  "../../skills/superpowers/subagent-driven-development",
+].map((path) => fileURLToPath(new URL(path, import.meta.url)));
 const POLL_INTERVAL_MS = 1000;
 const MAX_DEPTH = 8;
 
@@ -474,6 +480,12 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
   const currentDepth = depthContext.getStore() ?? 0;
   const catalog = await scanAgentsDirectory(AGENTS_DIR);
   const runs = new Map<string, SubAgentRun>();
+
+  pi.on("resources_discover", async () => {
+    return {
+      skillPaths: SUBAGENT_SKILL_PATHS,
+    };
+  });
 
   pi.on("session_shutdown", async () => {
     for (const run of runs.values()) {
