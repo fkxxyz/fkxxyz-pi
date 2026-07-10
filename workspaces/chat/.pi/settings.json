@@ -1,0 +1,9 @@
+{
+  "extensions": [
+    "disable-all-tools.ts"
+  ],
+  "enableSkillCommands": false,
+  "compaction": {
+    "enabled": false
+  }
+}

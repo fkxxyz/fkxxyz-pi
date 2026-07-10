@@ -1,0 +1,6 @@
+{
+  "extensions": [
+    "../../../extensions/sub-agent/sub-agent.ts",
+    "../../../extensions/exa/exa-mcp.ts"
+  ]
+}

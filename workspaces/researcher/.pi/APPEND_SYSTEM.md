@@ -1,0 +1,1 @@
+../../../agents/cclover/researcher.md

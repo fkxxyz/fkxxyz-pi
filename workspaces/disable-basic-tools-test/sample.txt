@@ -1,0 +1,8 @@
+This file exists so you can ask pi to read it during testing.
+
+Expected behavior with the disable-basic-tools extension enabled:
+
+- The read tool should be unavailable or blocked.
+- The write tool should be unavailable or blocked.
+- The edit tool should be unavailable or blocked.
+- The bash tool should be unavailable or blocked.

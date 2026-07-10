@@ -1,0 +1,10 @@
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getExtensionLoader } from "../base/extension-loader.ts";
+
+export default async function piWorkspace(pi: ExtensionAPI) {
+	const load = getExtensionLoader(pi).from(import.meta.url).load;
+
+	await load("../interaction/interaction.ts");
+	await load("../code/code.ts");
+	await load("../agent-development/prompt-skills.ts");
+}

@@ -1,0 +1,24 @@
+# dependencies
+node_modules/
+**/node_modules/
+
+# local symlinks to external personal assets
+/skills
+/agents/cclover
+
+# logs / caches
+*.log
+.cache/
+.DS_Store
+
+# env / secrets
+.env
+.env.*
+!.env.example.json
+.env.json
+*.pem
+*.key
+*.p12
+*.pfx
+*.sqlite
+*.db

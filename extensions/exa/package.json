@@ -1,0 +1,10 @@
+{
+  "name": "pi-exa-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local pi Exa MCP extension and runtime dependencies.",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.0"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "extensions": [
+    "../system-prompt/simplify-system-prompt.ts",
+    "../interaction/interaction.ts",
+    "../code/code.ts"
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "extensions": [
+    "../../../extensions/skills/brainstorming.ts"
+  ],
+  "enableSkillCommands": true
+}
