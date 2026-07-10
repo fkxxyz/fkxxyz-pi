@@ -1,8 +1,0 @@
-{
-  "extensions": [
-    "../../../extensions/entrypoints/pi-workspace.ts"
-  ],
-  "skills": [
-    "../skills"
-  ]
-}

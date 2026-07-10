@@ -4,6 +4,8 @@ This repository stores a personal pi workflow library: reusable extensions, pres
 
 ## What Belongs Here
 
+- `.pi/` contains configuration for the special root maintenance workspace.
+- `AGENTS.md` documents repository-specific guidance loaded by the root maintenance workspace.
 - `extensions/` contains reusable pi extensions grouped by purpose.
 - `extensions/entrypoints/` contains composition entrypoints that load reusable extensions through the shared loader.
 - `extensions/base/` contains shared infrastructure, such as the extension loader and personal config reader.
@@ -97,7 +99,21 @@ That JSON file lists the concrete feature extensions in the default preset. This
 
 ## Workspaces
 
-Each directory under `workspaces/` is a real pi project with its own `.pi/settings.json`. Resource paths in project settings are relative to `.pi`, so a workspace can load repository extensions without absolute paths:
+The root repository directory is also a special pi workspace for maintaining the repository and all personal pi workspaces. Its configuration lives in:
+
+```text
+.pi/settings.json
+```
+
+Repository-maintenance skills that should not be shared globally live under:
+
+```text
+.pi/skills/
+```
+
+These workspace-local skills are separate from the ignored `skills -> ~/agents/skills` symlink used for external shared skills.
+
+Each directory under `workspaces/` is a separate test or fixture pi project with its own `.pi/settings.json`. Resource paths in project settings are relative to `.pi`, so a workspace can load repository extensions without absolute paths:
 
 ```json
 {
@@ -109,7 +125,7 @@ Each directory under `workspaces/` is a real pi project with its own `.pi/settin
 
 Useful workspaces include:
 
-- `workspaces/pi/` for maintaining this repository.
+- `~/pi/` for maintaining this repository and all personal pi workspaces.
 - `workspaces/disable-basic-tools-test/` for testing the tool-blocking policy extension.
 - `workspaces/caveman-test/` for testing interaction style extensions.
 - `workspaces/chat/` for a minimal chat workspace with tools disabled.
@@ -163,6 +179,6 @@ pi
 Preview configured extension dependencies from the maintenance workspace with the bundled skill helper:
 
 ```bash
-cd ~/pi/workspaces/pi
-skills/pi/extension-dependency-preview/scripts/preview.sh
+cd ~/pi
+.pi/skills/pi/extension-dependency-preview/scripts/preview.sh
 ```

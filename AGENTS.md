@@ -2,7 +2,9 @@
 
 ## Purpose
 
-`~/pi/` is the personal home for reusable pi assets: extension presets, test workspaces, and prompt documents. Skill documents are maintained separately under `~/agents/skills/` because they are shared across workspaces and do not belong to any single workspace. This workspace, `~/pi/workspaces/pi`, is the maintenance workspace for that asset library. Its `AGENTS.md` is loaded as local guidance, so it should describe the current organization rules clearly enough for future sessions to maintain all pi workspaces and shared assets consistently.
+`~/pi/` is both the personal home for reusable pi assets and the repository root. It is also a special pi workspace: its own `.pi/settings.json` loads maintenance extensions and workspace-local skills so agents can manage the asset library, all test workspaces, and the repository itself from one place. Skill documents shared across projects are maintained separately under `~/agents/skills/` because they do not belong to any single workspace.
+
+This `AGENTS.md` is loaded as local guidance for the special `~/pi` maintenance workspace, so it should describe the current organization rules clearly enough for future sessions to maintain all pi workspaces and shared assets consistently.
 
 The goal is to keep personal pi customizations portable, easy to combine per project, and safe to test before wider use. When the rules, conventions, or directory model for `~/pi/` change, update this document as part of the same maintenance effort; otherwise this workspace will gradually lose the context it needs to manage the rest of the library reliably.
 
@@ -10,6 +12,13 @@ The goal is to keep personal pi customizations portable, easy to combine per pro
 
 ```text
 ~/pi/
+├── .pi/
+│   ├── settings.json
+│   ├── disable-preset
+│   └── skills/
+│       └── pi/
+│           └── <workspace-local-skill>/
+├── AGENTS.md
 ├── README.md
 ├── extensions/
 │   ├── base/
@@ -96,9 +105,11 @@ This skills directory is intentionally outside `~/pi/workspaces/` and is not own
 
 ### Workspaces
 
+The root `~/pi` directory is a special workspace for maintaining this repository and all personal pi workspaces. Its `.pi/settings.json` should load maintenance-only extensions and workspace-local skills. Keep skills that are only useful for repository maintenance under `~/pi/.pi/skills/` so they do not conflict with the ignored `~/pi/skills` symlink to shared external skills.
+
 Store test workspaces under `~/pi/workspaces/`.
 
-Each workspace should be a real pi project directory with its own `.pi/settings.json`. Use workspaces to test extension combinations before applying them to production projects.
+Test workspaces should be real pi project directories with their own `.pi/settings.json`. Use them to test extension combinations before applying them to production projects or the root maintenance workspace.
 
 Example from a workspace under `~/pi/workspaces/<name>`:
 
