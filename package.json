@@ -1,0 +1,5 @@
+{
+  "scripts": {
+    "test": "bun test tests/*.test.ts"
+  }
+}

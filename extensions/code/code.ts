@@ -8,6 +8,7 @@ export default async function code(pi: ExtensionAPI) {
 	await load("../reasoning/reasoning.ts");
 	await load("../exa/exa-mcp.ts");
 	await load("../sub-agent/sub-agent.ts");
+	await load("./apply-patch.ts");
 	await load("../environment/shared-skill-discovery.ts");
 	await load("../environment/arch-package-management.ts");
 	await load("../environment/project-directory-rules.ts");
