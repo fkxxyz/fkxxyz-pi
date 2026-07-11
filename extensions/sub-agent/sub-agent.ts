@@ -760,7 +760,11 @@ Prompt and context transfer:
 - reference_docs and fork are independent optimizations: fork transfers conversation history; reference_docs transfers explicit document content. They can be used together when both help.
 - Do not attach reference documents by default.
 
-Use existing_session_id only when the same child session's accumulated private context matters: continuing its investigation, asking it to refine its own prior result, following up, or correcting work it already performed. Do not use existing_session_id to start a different task, change agent type, switch fork/isolated mode, or replace project context.${diagnostics}`,
+Use existing_session_id only to continue the same live child session when its accumulated private context matters: continuing its investigation, asking it to refine its own prior result, following up, or correcting work it already performed.
+
+When existing_session_id is provided, the tool continues that session with its original project context, agent identity, fork/isolated mode, tools, settings, and system prompt. Do not provide project_path or agent with existing_session_id; those options are only for creating a new sub-agent session. If you need a different project, agent, or mode, create a new sub-agent instead of continuing an existing one.
+
+When continuing an existing session, relative reference_docs paths resolve against that existing session's project path.${diagnostics}`,
     promptSnippet: "Create or continue a recursive delegated sub-agent session for independent work",
     promptGuidelines: [
       "Use sub_agent only when an independently executable child task has clear payoff: parallelism, isolation, specialized behavior, independent review, context preservation, or filtering noisy output.",
@@ -771,11 +775,11 @@ Use existing_session_id only when the same child session's accumulated private c
     ],
     parameters: Type.Object({
       prompt: Type.String({ description: "Task for the child session. For isolated sessions, include enough context to execute; for fork or existing_session_id, provide the incremental follow-up task." }),
-      agent: Type.Optional(Type.String({ description: `Optional sub-agent mode/name. Omit for a new isolated generic sub-agent. Use a named agent only when its description matches the task. Use "fork" sparingly for an independent task that needs substantial inherited parent-session context; fork takes precedence over any agent named "fork". Available agents: ${[...startupCatalog.agents.keys()].sort().join(", ")}` })),
+      agent: Type.Optional(Type.String({ description: `Optional mode/name for creating a new sub-agent session. Omit for a new isolated generic sub-agent. Use a named agent only when its description matches the task. Use "fork" sparingly for an independent task that needs substantial inherited parent-session context; fork takes precedence over any agent named "fork". Do not provide agent with existing_session_id; an existing session keeps its original agent identity and fork/isolated mode. Available agents: ${[...startupCatalog.agents.keys()].sort().join(", ")}` })),
       run_in_background: Type.Boolean({ description: "Whether to run the sub-agent asynchronously in the background. Default to false: if the parent agent needs this sub-agent's result before continuing, or has no other independent work to do in parallel, run synchronously and wait for completion. This avoids an immediate return followed by an unnecessary sub_agent_result wait call. Set true only when the parent agent will do other independent work while the sub-agent runs, or when launching multiple independent sub-agents in parallel. If the next step is simply to wait for this result, use false." }),
-      existing_session_id: Type.Optional(Type.String({ description: "Live sub-agent session ID returned by sub_agent. Use only to continue, refine, follow up, or correct work in that same child session; do not use to change agent type, fork/isolated mode, or project context." })),
-      project_path: Type.Optional(Type.String({ description: "Project path for the new session (defaults to caller's project path)" })),
-      reference_docs: Type.Optional(Type.Array(Type.String(), { description: "File paths to inline as context when paths are much shorter, faster, or more accurate than writing the same context in the prompt. Useful for exact file snapshots, large specs/logs, or reusable background notes. Do not attach by default." })),
+      existing_session_id: Type.Optional(Type.String({ description: "Live sub-agent session ID returned by sub_agent. Use only to continue, refine, follow up, or correct work in that same child session. Mutually exclusive with project_path and agent: continuing a session preserves its original project context, agent identity, fork/isolated mode, tools, settings, and system prompt. To use a different project, agent, or mode, omit existing_session_id and create a new session." })),
+      project_path: Type.Optional(Type.String({ description: "Project path for creating a new sub-agent session. Defaults to the caller's project path. Do not provide project_path with existing_session_id; an existing session keeps its original project context. When continuing an existing session, relative reference_docs paths resolve against that existing session's project path." })),
+      reference_docs: Type.Optional(Type.Array(Type.String(), { description: "File paths to inline as context when paths are much shorter, faster, or more accurate than writing the same context in the prompt. Relative paths resolve against the new session's project_path, or against the existing session's original project path when existing_session_id is used. Useful for exact file snapshots, large specs/logs, or reusable background notes. Do not attach by default." })),
     }),
     async execute(_toolCallId, args, signal, _onUpdate, ctx) {
       let run: SubAgentRun | undefined;
@@ -795,9 +799,25 @@ Use existing_session_id only when the same child session's accumulated private c
               error: "existing_session_id must be an existing sub-agent session ID returned by a previous sub_agent call",
             }));
           }
+
+          if (args.project_path) {
+            return toolText(makeCreateRunFailurePayload({
+              ok: false,
+              session_id: sanitizeString(args.existing_session_id),
+              error: "project_path cannot be used with existing_session_id; continuing an existing sub-agent keeps its original project context. To use a different project, omit existing_session_id and create a new sub-agent session.",
+            }));
+          }
+
+          if (args.agent) {
+            return toolText(makeCreateRunFailurePayload({
+              ok: false,
+              session_id: sanitizeString(args.existing_session_id),
+              error: "agent cannot be used with existing_session_id; continuing an existing sub-agent keeps its original agent identity and fork/isolated mode. To use a different agent or mode, omit existing_session_id and create a new sub-agent session.",
+            }));
+          }
         }
 
-        const projectPath = args.project_path || ctx.cwd;
+        const projectPath = run?.projectPath || args.project_path || ctx.cwd;
         const referenceDocs = await readReferenceDocs(projectPath, args.reference_docs);
         if (!referenceDocs.ok) {
           const failure: CreateRunFailure = {

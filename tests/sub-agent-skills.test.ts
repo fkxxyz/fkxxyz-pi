@@ -258,12 +258,52 @@ export default {
 		expect(tool.description).toContain("Use agent=\"fork\" sparingly");
 		expect(tool.description).toContain("Fork is not a specialized worker; it is a context-inheritance mode");
 		expect(tool.description).toContain("reference_docs and fork are independent optimizations");
-		expect(tool.description).toContain("Use existing_session_id only when the same child session's accumulated private context matters");
+		expect(tool.description).toContain("Use existing_session_id only to continue the same live child session");
+		expect(tool.description).toContain("Do not provide project_path or agent with existing_session_id");
+		expect(tool.description).toContain("relative reference_docs paths resolve against that existing session's project path");
 		expect(tool.promptGuidelines).toContain("Use sub_agent only when an independently executable child task has clear payoff: parallelism, isolation, specialized behavior, independent review, context preservation, or filtering noisy output.");
 		expect(tool.parameters.prompt.description).toContain("for fork or existing_session_id, provide the incremental follow-up task");
-		expect(tool.parameters.agent.description).toContain("Use \"fork\" sparingly");
-		expect(tool.parameters.existing_session_id.description).toContain("do not use to change agent type");
+		expect(tool.parameters.agent.description).toContain("Do not provide agent with existing_session_id");
+		expect(tool.parameters.project_path.description).toContain("Do not provide project_path with existing_session_id");
+		expect(tool.parameters.existing_session_id.description).toContain("Mutually exclusive with project_path and agent");
 		expect(tool.parameters.reference_docs.description).toContain("paths are much shorter, faster, or more accurate");
+		expect(tool.parameters.reference_docs.description).toContain("existing session's original project path");
+	});
+
+	test("rejects project_path and agent when continuing an existing session", async () => {
+		const tool = await loadSubAgentExtension();
+		const created = await tool.execute(
+			"call-create",
+			{ prompt: "start", run_in_background: false },
+			undefined,
+			undefined,
+			{ cwd: process.cwd(), sessionManager: { getSessionFile: () => undefined } },
+		);
+		const sessionID = JSON.parse(created.content[0].text).session_id;
+
+		const withProjectPath = await tool.execute(
+			"call-continue-project",
+			{ prompt: "continue", existing_session_id: sessionID, project_path: tmpdir(), run_in_background: false },
+			undefined,
+			undefined,
+			{ cwd: process.cwd(), sessionManager: { getSessionFile: () => undefined } },
+		);
+		expect(JSON.parse(withProjectPath.content[0].text)).toEqual({
+			session_id: sessionID,
+			error: "project_path cannot be used with existing_session_id; continuing an existing sub-agent keeps its original project context. To use a different project, omit existing_session_id and create a new sub-agent session.",
+		});
+
+		const withAgent = await tool.execute(
+			"call-continue-agent",
+			{ prompt: "continue", existing_session_id: sessionID, agent: "fork", run_in_background: false },
+			undefined,
+			undefined,
+			{ cwd: process.cwd(), sessionManager: { getSessionFile: () => undefined } },
+		);
+		expect(JSON.parse(withAgent.content[0].text)).toEqual({
+			session_id: sessionID,
+			error: "agent cannot be used with existing_session_id; continuing an existing sub-agent keeps its original agent identity and fork/isolated mode. To use a different agent or mode, omit existing_session_id and create a new sub-agent session.",
+		});
 	});
 });
 
