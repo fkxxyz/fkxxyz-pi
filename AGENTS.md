@@ -134,6 +134,21 @@ Store reusable skill documents under:
 
 This skills directory is intentionally outside `~/pi/workspaces/` and is not owned by any individual workspace. When a workspace, extension, or prompt needs to reference a shared skill, treat `~/agents/skills/` as the canonical source and refer to skills from there rather than copying them into the workspace. This keeps skill maintenance centralized and prevents workspace-specific duplicates from drifting apart.
 
+### Runtime Pi Configuration Boundary
+
+`~/pi` stores reusable pi assets and test workspaces, but it is not the home for all pi runtime user state. Runtime state for the installed agent lives under `~/.pi/agent/`. Keep this boundary clear so maintenance sessions do not search or edit the asset repository when the user is asking for a running pi configuration change.
+
+Use this quick map for runtime configuration tasks:
+
+```text
+~/.pi/agent/models.json    custom providers and model metadata
+~/.pi/agent/settings.json  defaultProvider, defaultModel, enabledModels, global extensions
+~/.pi/agent/auth.json      auth state
+~/.pi/agent/sessions/      saved sessions
+```
+
+For model, provider, default-model, enabled-model, auth, or session requests, inspect the relevant `~/.pi/agent/` files before searching `~/pi`. For model/provider/default-model changes, `models.json` and `settings.json` are usually the canonical starting point. If a requested model should match an existing model's limits or behavior, clone the closest existing entry and preserve unspecified fields. Keep `defaultProvider`, `defaultModel`, and `enabledModels` consistent when changing defaults.
+
 ### Workspaces
 
 The root `~/pi` directory is a special workspace for maintaining this repository and all personal pi workspaces. Its `.pi/settings.json` should load maintenance-only extensions and workspace-local skills. Keep skills that are only useful for repository maintenance under `~/pi/.pi/skills/` so they do not conflict with the ignored `~/pi/skills` symlink to shared external skills.

@@ -8,6 +8,8 @@ Start with the overall goal, architecture, system boundaries, and major data or 
 
 Use clear hypotheses and systematic elimination instead of blind exploration. Let the big-picture model guide which details matter.
 
+For configuration tasks, first identify the scope of the change: user-global state, workspace-local settings, reusable repository assets, or installed package/source files. This prevents the current working directory from anchoring the search to the wrong layer.
+
 For small, self-contained tasks, keep this lightweight and do not over-analyze.`;
 
 export default function topDownAnalysis(pi: ExtensionAPI) {
