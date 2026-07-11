@@ -124,6 +124,8 @@ Before designing, editing, reviewing, or writing any prompt-like artifact, inclu
 
 Apply that standard when updating this document: explain the maintenance context, desired outcomes, and important boundaries instead of accumulating brittle commands. This matters because `AGENTS.md` is prompt-loaded guidance; unclear or over-prescriptive edits can make future workspace maintenance less reliable.
 
+When prompt-like text is embedded in executable source, such as TypeScript extension template strings, treat the edit as both prompt maintenance and source-code maintenance. First identify the carrier format and its escaping rules. In TS template literals, Markdown backticks and template-sensitive tokens such as `${...}` can break parsing unless escaped or avoided. Validate extension-source prompt edits with a TS-aware or pi-loader-equivalent check; `node --check` alone is not sufficient because it may accept constructs that the TypeScript extension loader rejects.
+
 ### Skills
 
 Store reusable skill documents under:
