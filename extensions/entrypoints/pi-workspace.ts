@@ -6,5 +6,6 @@ export default async function piWorkspace(pi: ExtensionAPI) {
 
 	await load("../interaction/interaction.ts");
 	await load("../code/code.ts");
+	await load("../tool-output/tool-output-limiter.ts");
 	await load("../agent-development/prompt-skills.ts");
 }
