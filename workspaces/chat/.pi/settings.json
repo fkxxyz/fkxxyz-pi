@@ -1,5 +1,6 @@
 {
   "extensions": [
+    "minimal-system-prompt.ts",
     "disable-all-tools.ts"
   ],
   "enableSkillCommands": false,
