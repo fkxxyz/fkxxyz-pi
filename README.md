@@ -6,6 +6,7 @@ This repository stores a personal pi workflow library: reusable extensions, pres
 
 - `.pi/` contains configuration for the special root maintenance workspace.
 - `AGENTS.md` documents repository-specific guidance loaded by the root maintenance workspace.
+- `agents.ts` is the global sub-agent index used by `extensions/sub-agent/sub-agent.ts`.
 - `extensions/` contains reusable pi extensions grouped by purpose.
 - `extensions/entrypoints/` contains composition entrypoints that load reusable extensions through the shared loader.
 - `extensions/base/` contains shared infrastructure, such as the extension loader and personal config reader.
@@ -13,7 +14,7 @@ This repository stores a personal pi workflow library: reusable extensions, pres
 - `workspaces/` contains small pi projects for testing extension combinations.
 - `.env.example.json` documents local configuration keys without exposing real values.
 
-External shared skills and agent prompts are intentionally not vendored into this repository. Local symlinks can expose them to extensions and workspaces during use, while `.gitignore` keeps those symlinks out of git.
+External shared skills and agent prompt libraries are intentionally not vendored into this repository. Local symlinks can expose them to extensions and workspaces during use, while `.gitignore` keeps those symlinks out of git. The committed `agents.ts` indexes selected prompts from those local libraries; machines using those entries need the corresponding ignored symlink targets.
 
 ## Required Local Configuration
 
@@ -74,6 +75,36 @@ workspaces/clover8/.pi/APPEND_SYSTEM.md -> ../../../agents/cclover/clover8.md
 ```
 
 Those workspace symlinks are safe to commit when their link text is relative and does not expose local absolute paths. They will work on machines where the corresponding ignored `agents/...` symlink exists.
+
+## Sub-agent Index
+
+The sub-agent extension loads named agents from TypeScript index files instead of scanning Markdown files automatically:
+
+```text
+~/pi/agents.ts
+<project>/.pi/agents.ts
+```
+
+The global index loads first. A project's `.pi/agents.ts` loads second and shallow-merges same-name agents over the global entry, so a project can override only fields such as `description` while inheriting the prompt source.
+
+Each agent needs a `description` for parent-agent selection and exactly one source after merge:
+
+```ts
+export default {
+  helper: {
+    description: "Focused helper for this project",
+    systemPromptFile: "./prompts/helper.md",
+  },
+};
+```
+
+Supported sources:
+
+- `systemPrompt`: inline prompt text.
+- `systemPromptFile`: `.md` prompt path, absolute or relative to the defining `agents.ts`.
+- `workspace`: workspace path whose own `.pi/settings.json`, extensions, skills, and system prompt rules define the child session; no agent-specific prompt block is injected.
+
+Markdown files under `~/pi/agents/` are no longer auto-registered. They can still be referenced explicitly with `systemPromptFile`.
 
 ## Default Preset Flow
 

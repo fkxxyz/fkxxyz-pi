@@ -20,6 +20,7 @@ The goal is to keep personal pi customizations portable, easy to combine per pro
 │           └── <workspace-local-skill>/
 ├── AGENTS.md
 ├── README.md
+├── agents.ts
 ├── extensions/
 │   ├── base/
 │   │   ├── conditional-preset-loader.ts
@@ -80,6 +81,36 @@ export default async function root(pi: ExtensionAPI) {
 ```
 
 The loader identifies extensions by resolved module URL, so the same extension can be included from multiple roots without executing twice. It also reports circular inclusion. Keep dependency relationships explicit in code with `load(...)`; do not add hand-written ids, `defineExtension`, or `dependencies` manifests unless a future change justifies the extra protocol. Do not place concrete feature extensions or entrypoint extensions in `~/pi/extensions/base/`; that directory is reserved for composition infrastructure.
+
+### Sub-agents
+
+Named sub-agents are registered through TypeScript index files, not by automatically scanning Markdown files:
+
+```text
+~/pi/agents.ts
+<workspace>/.pi/agents.ts
+```
+
+The global index loads first. A workspace-local `.pi/agents.ts` loads second for the target project and shallow-merges same-name entries over global entries. Use this when a project needs to override a description or replace one prompt source without redefining every global agent.
+
+Each agent entry should include a `description` for the parent agent and exactly one source after merge:
+
+```ts
+export default {
+  helper: {
+    description: "Focused helper for this workspace",
+    systemPromptFile: "./prompts/helper.md",
+  },
+};
+```
+
+Supported sources are:
+
+- `systemPrompt` for inline prompt text.
+- `systemPromptFile` for a Markdown prompt file path, absolute or relative to the defining `agents.ts`.
+- `workspace` for a pi workspace path whose own settings, extensions, skills, and system prompt rules define the child session. Workspace agents do not receive an additional agent-specific prompt block.
+
+Markdown files under `~/pi/agents/` are prompt assets only when referenced explicitly; they are no longer auto-registered as agents. Keep the global `~/pi/agents.ts` focused on reusable default agents. Prefer project `.pi/agents.ts` for project-specific names and overrides.
 
 ### Prompts
 

@@ -10,13 +10,14 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync } from "node:fs";
-import { lstat, mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, extname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-const AGENTS_DIR = join(homedir(), "pi", "agents");
+const GLOBAL_AGENTS_FILE = join(homedir(), "pi", "agents.ts");
+const PROJECT_AGENTS_FILE = join(".pi", "agents.ts");
 const SUBAGENT_SKILL_PATHS = [
   "../../skills/subagent-delegation-verification",
   "../../skills/subagent-prompt-simplification",
@@ -30,9 +31,12 @@ type WaitMode = "none" | "any" | "all";
 
 type AgentDefinition = {
   name: string;
-  path: string;
-  realPath: string;
-  content: string;
+  description: string;
+  configPath: string;
+  baseDir: string;
+  systemPrompt?: string;
+  systemPromptFile?: string;
+  workspace?: string;
 };
 
 type AgentCatalog = {
@@ -307,7 +311,10 @@ function shouldReturnResults(results: AgentResultPayload[], waitMode: WaitMode) 
 function formatAvailableAgentsForDescription(catalog: AgentCatalog) {
   const names = [...catalog.agents.keys()].sort();
   if (names.length === 0) return "(none found)";
-  return names.map((name) => `- ${name}`).join("\n");
+  return names.map((name) => {
+    const agent = catalog.agents.get(name)!;
+    return `- ${name}: ${agent.description}`;
+  }).join("\n");
 }
 
 function formatAgentDiagnostics(catalog: AgentCatalog) {
@@ -315,112 +322,124 @@ function formatAgentDiagnostics(catalog: AgentCatalog) {
   return `\n\nAgent catalog diagnostics:\n${catalog.diagnostics.map((d) => `- ${d}`).join("\n")}`;
 }
 
-async function scanAgentsDirectory(root: string): Promise<AgentCatalog> {
-  const found = new Map<string, AgentDefinition[]>();
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function resolveConfigPath(value: string, baseDir: string) {
+  return isAbsolute(value) ? value : resolve(baseDir, value);
+}
+
+function normalizeAgentDefinition(name: string, raw: unknown, configPath: string, diagnostics: string[]): AgentDefinition | null {
+  if (!isPlainObject(raw)) {
+    diagnostics.push(`Agent "${name}" in ${configPath} must be an object`);
+    return null;
+  }
+
+  const description = typeof raw.description === "string" ? raw.description.trim() : "";
+  if (!description) {
+    diagnostics.push(`Agent "${name}" in ${configPath} must define a non-empty description`);
+    return null;
+  }
+
+  const sources = ["systemPrompt", "systemPromptFile", "workspace"].filter((key) => typeof raw[key] === "string" && raw[key]);
+  if (sources.length > 1) {
+    diagnostics.push(`Agent "${name}" in ${configPath} must define at most one of systemPrompt, systemPromptFile, or workspace`);
+    return null;
+  }
+
+  return {
+    name,
+    description,
+    configPath,
+    baseDir: dirname(configPath),
+    systemPrompt: typeof raw.systemPrompt === "string" ? raw.systemPrompt : undefined,
+    systemPromptFile: typeof raw.systemPromptFile === "string" ? raw.systemPromptFile : undefined,
+    workspace: typeof raw.workspace === "string" ? raw.workspace : undefined,
+  };
+}
+
+function mergeAgentDefinition(base: AgentDefinition, override: AgentDefinition): AgentDefinition {
+  const merged: AgentDefinition = {
+    ...base,
+    name: override.name,
+    description: override.description,
+  };
+  const overrideSources = [override.systemPrompt, override.systemPromptFile, override.workspace].filter((value) => typeof value === "string" && value).length;
+  if (overrideSources > 0) {
+    merged.configPath = override.configPath;
+    merged.baseDir = override.baseDir;
+    merged.systemPrompt = override.systemPrompt;
+    merged.systemPromptFile = override.systemPromptFile;
+    merged.workspace = override.workspace;
+  }
+  return merged;
+}
+
+async function loadAgentsFile(configPath: string): Promise<AgentCatalog> {
   const diagnostics: string[] = [];
-  const visitedDirs = new Set<string>();
-  const visitedFiles = new Set<string>();
+  if (!existsSync(configPath)) return { agents: new Map(), diagnostics };
 
-  async function addFile(filePath: string) {
-    if (extname(filePath).toLowerCase() !== ".md") return;
-
-    let fileRealPath: string;
-    try {
-      fileRealPath = await realpath(filePath);
-    } catch (error) {
-      diagnostics.push(`Could not resolve agent file ${filePath}: ${extractHelpfulErrorMessage(error)}`);
-      return;
-    }
-
-    if (visitedFiles.has(fileRealPath)) return;
-    visitedFiles.add(fileRealPath);
-
-    const name = basename(filePath, extname(filePath));
-    if (!name) return;
-
-    try {
-      const content = await readFile(filePath, "utf8");
-      const current = found.get(name) ?? [];
-      current.push({ name, path: filePath, realPath: fileRealPath, content });
-      found.set(name, current);
-    } catch (error) {
-      diagnostics.push(`Could not read agent file ${filePath}: ${extractHelpfulErrorMessage(error)}`);
-    }
-  }
-
-  async function walk(path: string) {
-    let lst;
-    try {
-      lst = await lstat(path);
-    } catch (error) {
-      diagnostics.push(`Could not access ${path}: ${extractHelpfulErrorMessage(error)}`);
-      return;
-    }
-
-    let targetStat = lst;
-    if (lst.isSymbolicLink()) {
-      try {
-        targetStat = await stat(path);
-      } catch (error) {
-        diagnostics.push(`Broken symlink or inaccessible target ${path}: ${extractHelpfulErrorMessage(error)}`);
-        return;
-      }
-    }
-
-    if (targetStat.isDirectory()) {
-      let dirRealPath: string;
-      try {
-        dirRealPath = await realpath(path);
-      } catch (error) {
-        diagnostics.push(`Could not resolve directory ${path}: ${extractHelpfulErrorMessage(error)}`);
-        return;
-      }
-
-      if (visitedDirs.has(dirRealPath)) return;
-      visitedDirs.add(dirRealPath);
-
-      let entries;
-      try {
-        entries = await readdir(path, { withFileTypes: true });
-      } catch (error) {
-        diagnostics.push(`Could not read directory ${path}: ${extractHelpfulErrorMessage(error)}`);
-        return;
-      }
-
-      for (const entry of entries) {
-        await walk(join(path, entry.name));
-      }
-      return;
-    }
-
-    if (targetStat.isFile()) {
-      await addFile(path);
-    }
-  }
-
-  if (!existsSync(root)) {
-    diagnostics.push(`Agents directory does not exist: ${root}`);
+  try {
+    await stat(configPath);
+  } catch (error) {
+    diagnostics.push(`Could not access ${configPath}: ${extractHelpfulErrorMessage(error)}`);
     return { agents: new Map(), diagnostics };
   }
 
-  await walk(root);
-
-  const agents = new Map<string, AgentDefinition>();
-  const duplicates: string[] = [];
-  for (const [name, defs] of found.entries()) {
-    if (defs.length > 1) {
-      duplicates.push(`Duplicate agent name "${name}": ${defs.map((d) => d.path).join(", ")}`);
-      continue;
-    }
-    agents.set(name, defs[0]!);
+  let moduleExports: any;
+  try {
+    moduleExports = await import(`${pathToFileURL(configPath).href}?mtime=${Date.now()}`);
+  } catch (error) {
+    diagnostics.push(`Could not import ${configPath}: ${extractHelpfulErrorMessage(error)}`);
+    return { agents: new Map(), diagnostics };
   }
 
-  if (duplicates.length > 0) {
-    throw new Error(`Duplicate sub-agent names found in ${root}:\n${duplicates.join("\n")}`);
+  const rawAgents = moduleExports.default ?? moduleExports.agents;
+  if (!isPlainObject(rawAgents)) {
+    diagnostics.push(`${configPath} must export an agents object as default export or named export "agents"`);
+    return { agents: new Map(), diagnostics };
+  }
+
+  const agents = new Map<string, AgentDefinition>();
+  for (const [name, raw] of Object.entries(rawAgents)) {
+    const definition = normalizeAgentDefinition(name, raw, configPath, diagnostics);
+    if (definition) agents.set(name, definition);
   }
 
   return { agents, diagnostics };
 }
+
+async function loadAgentCatalog(projectPath: string): Promise<AgentCatalog> {
+  const globalCatalog = await loadAgentsFile(GLOBAL_AGENTS_FILE);
+  const projectCatalog = await loadAgentsFile(resolve(projectPath, PROJECT_AGENTS_FILE));
+  const agents = new Map(globalCatalog.agents);
+  const diagnostics = [...globalCatalog.diagnostics, ...projectCatalog.diagnostics];
+
+  for (const [name, definition] of projectCatalog.agents) {
+    const existing = agents.get(name);
+    agents.set(name, existing ? mergeAgentDefinition(existing, definition) : definition);
+  }
+
+  for (const [name, definition] of [...agents]) {
+    const sources = [definition.systemPrompt, definition.systemPromptFile, definition.workspace].filter((value) => typeof value === "string" && value).length;
+    if (sources !== 1) {
+      diagnostics.push(`Agent "${name}" must define exactly one of systemPrompt, systemPromptFile, or workspace after global/project merge`);
+      agents.delete(name);
+    }
+  }
+
+  return { agents, diagnostics };
+}
+
+async function resolveAgentSystemPrompt(agent: AgentDefinition): Promise<string | null> {
+  if (agent.systemPrompt !== undefined) return agent.systemPrompt;
+  if (agent.systemPromptFile !== undefined) {
+    return readFile(resolveConfigPath(agent.systemPromptFile, agent.baseDir), "utf8");
+  }
+  return null;
+}
+
 
 async function createForkBranchSessionFile(input: {
   sessionManager: any;
@@ -491,6 +510,7 @@ async function readReferenceDocs(projectPath: string, referenceDocs: string[] | 
 function buildSubAgentSystemPrompt(input: {
   agent?: AgentDefinition;
   depth: number;
+  systemPrompt?: string | null;
 }) {
   const name = input.agent?.name ?? "sub-agent";
   const runtimeBlock = `<sub_agent_runtime>
@@ -500,12 +520,12 @@ Complete only the delegated task. Return a concise, useful result to the parent 
 You may create further sub-agents with sub_agent when the task can be cleanly split, but never exceed the recursion depth limit.
 </sub_agent_runtime>`;
 
-  if (!input.agent) return runtimeBlock;
+  if (!input.agent || input.systemPrompt === null) return runtimeBlock;
 
   return `${runtimeBlock}
 
-<sub_agent_instructions agent="${input.agent.name}" path="${input.agent.path}">
-${input.agent.content}
+<sub_agent_instructions agent="${input.agent.name}" source="${input.agent.configPath}">
+${input.systemPrompt ?? ""}
 </sub_agent_instructions>`;
 }
 
@@ -517,7 +537,7 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
   initTheme(undefined, false);
 
   const currentDepth = depthContext.getStore() ?? 0;
-  const catalog = await scanAgentsDirectory(AGENTS_DIR);
+  const startupCatalog = await loadAgentCatalog(process.cwd());
   const runs = new Map<string, SubAgentRun>();
 
   pi.on("resources_discover", async () => {
@@ -572,11 +592,12 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
     const requestedAgent = sanitizeOptionalString(args.agent);
     const forkMode = requestedAgent === "fork";
     const effectiveRequestedAgent = forkMode ? undefined : requestedAgent;
-    const agent = effectiveRequestedAgent ? catalog.agents.get(effectiveRequestedAgent) : undefined;
+    const runtimeCatalog = await loadAgentCatalog(projectPath);
+    const agent = effectiveRequestedAgent ? runtimeCatalog.agents.get(effectiveRequestedAgent) : undefined;
     if (effectiveRequestedAgent && !agent) {
       return {
         ok: false,
-        error: `Unknown sub-agent: ${effectiveRequestedAgent}. Available agents: ${[...catalog.agents.keys()].sort().join(", ") || "(none)"}`,
+        error: `Unknown sub-agent: ${effectiveRequestedAgent}. Available agents: ${[...runtimeCatalog.agents.keys()].sort().join(", ") || "(none)"}`,
       };
     }
 
@@ -595,12 +616,14 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
       return { ok: true, run: existingRun };
     }
 
+    const sessionProjectPath = agent?.workspace ? resolveConfigPath(agent.workspace, agent.baseDir) : projectPath;
     const agentDir = getAgentDir();
-    const agentBlock = buildSubAgentSystemPrompt({ agent, depth: nextDepth });
+    const systemPrompt = agent ? await resolveAgentSystemPrompt(agent) : undefined;
+    const agentBlock = buildSubAgentSystemPrompt({ agent, depth: nextDepth, systemPrompt });
     const loader = new DefaultResourceLoader({
-      cwd: projectPath,
+      cwd: sessionProjectPath,
       agentDir,
-      appendSystemPromptOverride: (base) => [...base, agentBlock],
+      appendSystemPromptOverride: (base: string[]) => [...base, agentBlock],
     });
 
     await depthContext.run(nextDepth, async () => {
@@ -622,11 +645,11 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
         };
       }
 
-      childSessionManager = resolve(projectPath) === resolve(ctx.cwd)
+      childSessionManager = resolve(sessionProjectPath) === resolve(ctx.cwd)
         ? SessionManager.open(branchFile, undefined, projectPath)
-        : SessionManager.forkFrom(branchFile, projectPath);
+        : SessionManager.forkFrom(branchFile, sessionProjectPath);
     } else {
-      childSessionManager = SessionManager.create(projectPath, undefined, { parentSession });
+      childSessionManager = SessionManager.create(sessionProjectPath, undefined, { parentSession });
     }
 
     const subAgentLabel = forkMode ? "sub-agent:fork" : requestedAgent ? `sub-agent:${requestedAgent}` : "sub-agent";
@@ -636,29 +659,34 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
       mode: forkMode ? "fork" : "isolated",
       parentTask: args.prompt,
       parentSession,
-      projectPath,
+      projectPath: sessionProjectPath,
+      requestedProjectPath: projectPath,
       depth: nextDepth,
       createdAt: new Date().toISOString(),
     });
 
+    const sessionOptions: any = {
+      cwd: sessionProjectPath,
+      agentDir,
+      model: ctx.model ?? undefined,
+      modelRegistry: ctx.modelRegistry,
+      thinkingLevel: pi.getThinkingLevel(),
+      resourceLoader: loader,
+      sessionManager: childSessionManager,
+    };
+    if (!agent?.workspace) {
+      sessionOptions.tools = pi.getActiveTools();
+    }
+
     const { session } = await depthContext.run(nextDepth, async () =>
-      createAgentSession({
-        cwd: projectPath,
-        agentDir,
-        model: ctx.model ?? undefined,
-        modelRegistry: ctx.modelRegistry,
-        thinkingLevel: pi.getThinkingLevel(),
-        tools: pi.getActiveTools(),
-        resourceLoader: loader,
-        sessionManager: childSessionManager,
-      }),
+      createAgentSession(sessionOptions),
     );
 
     const id = `sub_${Date.now()}_${randomUUID().slice(0, 8)}`;
     const run: SubAgentRun = {
       id,
       agentName: forkMode ? "fork" : requestedAgent ?? "sub-agent",
-      projectPath,
+      projectPath: sessionProjectPath,
       prompt: args.prompt,
       depth: nextDepth,
       createdAt: Date.now(),
@@ -701,31 +729,53 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
     }
   }
 
-  const availableAgents = formatAvailableAgentsForDescription(catalog);
-  const diagnostics = formatAgentDiagnostics(catalog);
+  const availableAgents = formatAvailableAgentsForDescription(startupCatalog);
+  const diagnostics = formatAgentDiagnostics(startupCatalog);
 
   pi.registerTool({
     name: "sub_agent",
     label: "Sub Agent",
-    description: `Use whenever work can be cleanly separated into an independent task for another agent, even if it is small or simple. Prefer spawning sub-agents aggressively when work can be split into multiple independent tasks that can run in parallel. Pass relevant context through reference_docs whenever possible so the task prompt stays short, focused, and easy to follow. Common examples include researching separate questions, modifying different files, reviewing multiple areas of code, exploring different directions within the same codebase, and comparing alternative implementations in parallel.
+    description: `Use when a task can be delegated as an independently executable unit and the expected benefit outweighs the cost of creating, coordinating, and integrating a child session. Useful payoffs include parallelism, isolation, specialized agent behavior, independent review, context-window preservation, filtering noisy or large tool output into a compact result, or amortizing repeated context transfer.
 
-Available agents from ${AGENTS_DIR}:
+Delegate independent tasks in parallel when this reduces elapsed time or parent-session complexity: separate research questions, isolated file changes, separate code-review areas, independent investigations, alternative implementations, or extracting a small answer from a large/noisy source. Keep dependent work sequential.
+
+Do not delegate merely because a task exists. Do not use sub-agents for work the parent can complete directly with comparable or lower total cost, for tasks that require continuous parent judgment, or when the next step is simply to wait for an existing result.
+
+Available agents from ${GLOBAL_AGENTS_FILE} and ${PROJECT_AGENTS_FILE}:
 ${availableAgents}
 
-Important: the "agent" argument is optional. Omit it to create a generic sub-agent that builds its own system prompt from the same workspace configuration. When provided, "agent" must be a sub-agent name from a Markdown filename under ${AGENTS_DIR}. Special value: agent="fork" forks the parent session's current conversation branch instead of selecting a named agent; this takes precedence over any agent named "fork".${diagnostics}`,
+Named agents are loaded from global ${GLOBAL_AGENTS_FILE} first, then from the target project's ${PROJECT_AGENTS_FILE}; project entries shallow-merge and override global entries.
+
+Agent selection:
+- Omit "agent" for a new isolated generic sub-agent with the same workspace configuration. This is the default for most delegated work.
+- Use a named agent only when its description matches the delegation need.
+- Use agent="fork" sparingly. Fork is not a specialized worker; it is a context-inheritance mode. Use it only when the task is clearly independent yet accurate execution would otherwise require restating substantial parent-session context, such as prior decisions, failed attempts, nuanced constraints, or accumulated findings. This is uncommon because tasks that need extensive shared context are often not truly independent.
+- Do not use fork as a convenience for work the parent can complete directly, or for tasks whose required context is short enough to state in the prompt. Fork creates a child session from the parent's current conversation branch and takes precedence over any agent named "fork".
+
+Prompt and context transfer:
+- For isolated sub-agents, make the prompt self-contained enough to execute: state the task, key constraints, and expected result.
+- For fork, give only the incremental task; inherited conversation history supplies the shared context.
+- Use reference_docs when passing document paths is much shorter, faster, or less error-prone than writing the same context into the prompt. Each referenced document should materially reduce prompt length, improve accuracy, or provide exact context the child needs.
+- If substantial background will likely be reused across multiple sub-agent calls, consider writing it once to a temporary/reference document and passing that path via reference_docs. This amortizes one documentation cost across repeated delegations.
+- reference_docs and fork are independent optimizations: fork transfers conversation history; reference_docs transfers explicit document content. They can be used together when both help.
+- Do not attach reference documents by default.
+
+Use existing_session_id only when the same child session's accumulated private context matters: continuing its investigation, asking it to refine its own prior result, following up, or correcting work it already performed. Do not use existing_session_id to start a different task, change agent type, switch fork/isolated mode, or replace project context.${diagnostics}`,
     promptSnippet: "Create or continue a recursive delegated sub-agent session for independent work",
     promptGuidelines: [
-      "Use sub_agent to delegate independent subtasks to named recursive sub-agents when work can be parallelized or isolated.",
+      "Use sub_agent only when an independently executable child task has clear payoff: parallelism, isolation, specialized behavior, independent review, context preservation, or filtering noisy output.",
+      "Prefer isolated sub-agents by default; use fork sparingly when substantial inherited conversation context is necessary for an otherwise independent task.",
+      "Use reference_docs to reduce repeated or verbose context transfer when path-based context is cheaper or more accurate than prompt text.",
       "Use sub_agent_result to check background delegated work instead of re-running the same task.",
       "Use sub_agent_stop to halt delegated work that should no longer continue.",
     ],
     parameters: Type.Object({
-      prompt: Type.String({ description: "Task description to send to the new session" }),
-      agent: Type.Optional(Type.String({ description: `Optional sub-agent name to run this task. Omit to use a generic sub-agent with the same workspace configuration. Special value "fork" forks the parent session's current conversation branch and takes precedence over any agent named fork. Available agents: ${[...catalog.agents.keys()].sort().join(", ")}` })),
+      prompt: Type.String({ description: "Task for the child session. For isolated sessions, include enough context to execute; for fork or existing_session_id, provide the incremental follow-up task." }),
+      agent: Type.Optional(Type.String({ description: `Optional sub-agent mode/name. Omit for a new isolated generic sub-agent. Use a named agent only when its description matches the task. Use "fork" sparingly for an independent task that needs substantial inherited parent-session context; fork takes precedence over any agent named "fork". Available agents: ${[...startupCatalog.agents.keys()].sort().join(", ")}` })),
       run_in_background: Type.Boolean({ description: "Whether to run the sub-agent asynchronously in the background. Default to false: if the parent agent needs this sub-agent's result before continuing, or has no other independent work to do in parallel, run synchronously and wait for completion. This avoids an immediate return followed by an unnecessary sub_agent_result wait call. Set true only when the parent agent will do other independent work while the sub-agent runs, or when launching multiple independent sub-agents in parallel. If the next step is simply to wait for this result, use false." }),
-      existing_session_id: Type.Optional(Type.String({ description: "Existing delegated sub-agent session ID to continue (must be a real session ID previously returned by sub_agent, e.g. sub_...)" })),
+      existing_session_id: Type.Optional(Type.String({ description: "Live sub-agent session ID returned by sub_agent. Use only to continue, refine, follow up, or correct work in that same child session; do not use to change agent type, fork/isolated mode, or project context." })),
       project_path: Type.Optional(Type.String({ description: "Project path for the new session (defaults to caller's project path)" })),
-      reference_docs: Type.Optional(Type.Array(Type.String(), { description: "Array of file paths to inline as reference documents" })),
+      reference_docs: Type.Optional(Type.Array(Type.String(), { description: "File paths to inline as context when paths are much shorter, faster, or more accurate than writing the same context in the prompt. Useful for exact file snapshots, large specs/logs, or reusable background notes. Do not attach by default." })),
     }),
     async execute(_toolCallId, args, signal, _onUpdate, ctx) {
       let run: SubAgentRun | undefined;
@@ -795,7 +845,7 @@ Important: the "agent" argument is optional. Omit it to create a generic sub-age
         return toolText(makeUnknownErrorPayload({
           run,
           error,
-          availableAgents: [...catalog.agents.keys()].sort(),
+          availableAgents: [...startupCatalog.agents.keys()].sort(),
         }));
       }
     },
