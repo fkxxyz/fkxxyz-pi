@@ -722,7 +722,7 @@ Important: the "agent" argument is optional. Omit it to create a generic sub-age
     parameters: Type.Object({
       prompt: Type.String({ description: "Task description to send to the new session" }),
       agent: Type.Optional(Type.String({ description: `Optional sub-agent name to run this task. Omit to use a generic sub-agent with the same workspace configuration. Special value "fork" forks the parent session's current conversation branch and takes precedence over any agent named fork. Available agents: ${[...catalog.agents.keys()].sort().join(", ")}` })),
-      run_in_background: Type.Boolean({ description: "Execution mode: true for async, false for sync" }),
+      run_in_background: Type.Boolean({ description: "Whether to run the sub-agent asynchronously in the background. Default to false: if the parent agent needs this sub-agent's result before continuing, or has no other independent work to do in parallel, run synchronously and wait for completion. This avoids an immediate return followed by an unnecessary sub_agent_result wait call. Set true only when the parent agent will do other independent work while the sub-agent runs, or when launching multiple independent sub-agents in parallel. If the next step is simply to wait for this result, use false." }),
       existing_session_id: Type.Optional(Type.String({ description: "Existing delegated sub-agent session ID to continue (must be a real session ID previously returned by sub_agent, e.g. sub_...)" })),
       project_path: Type.Optional(Type.String({ description: "Project path for the new session (defaults to caller's project path)" })),
       reference_docs: Type.Optional(Type.Array(Type.String(), { description: "Array of file paths to inline as reference documents" })),
