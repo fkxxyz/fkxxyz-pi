@@ -78,7 +78,7 @@ mock.module("typebox", () => ({
 		Array: (schema: unknown, options?: Record<string, unknown>) => ({ schema, ...options }),
 		Boolean: (schema: unknown) => schema,
 		Object: (schema: unknown) => schema,
-		Optional: (schema: unknown) => schema,
+		Optional: (schema: unknown) => ({ ...(schema as Record<string, unknown>), optional: true }),
 		String: (schema: unknown) => schema,
 	},
 }));
@@ -263,6 +263,12 @@ export default {
 		expect(tool.description).toContain("relative reference_docs paths resolve against that existing session's project path");
 		expect(tool.promptGuidelines).toContain("Use sub_agent only when an independently executable child task has clear payoff: parallelism, isolation, specialized behavior, independent review, context preservation, or filtering noisy output.");
 		expect(tool.parameters.prompt.description).toContain("for fork or existing_session_id, provide the incremental follow-up task");
+		expect(tool.parameters.prompt.optional).toBeUndefined();
+		expect(tool.parameters.agent.optional).toBe(true);
+		expect(tool.parameters.run_in_background.optional).toBe(true);
+		expect(tool.parameters.existing_session_id.optional).toBe(true);
+		expect(tool.parameters.project_path.optional).toBe(true);
+		expect(tool.parameters.reference_docs.optional).toBe(true);
 		expect(tool.parameters.agent.description).toContain("Do not provide agent with existing_session_id");
 		expect(tool.parameters.project_path.description).toContain("Do not provide project_path with existing_session_id");
 		expect(tool.parameters.existing_session_id.description).toContain("Mutually exclusive with project_path and agent");
