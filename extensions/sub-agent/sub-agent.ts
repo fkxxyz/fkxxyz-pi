@@ -454,16 +454,20 @@ async function readReferenceDocs(projectPath: string, referenceDocs: string[] | 
 }
 
 function buildSubAgentSystemPrompt(input: {
-  agent: AgentDefinition;
+  agent?: AgentDefinition;
   depth: number;
-  parentTask: string;
 }) {
-  return `<sub_agent_runtime>
-You are running as delegated recursive sub-agent "${input.agent.name}".
+  const name = input.agent?.name ?? "sub-agent";
+  const runtimeBlock = `<sub_agent_runtime>
+You are running as delegated recursive sub-agent "${name}".
 Recursion depth: ${input.depth}/${MAX_DEPTH}.
 Complete only the delegated task. Return a concise, useful result to the parent agent.
 You may create further sub-agents with sub_agent when the task can be cleanly split, but never exceed the recursion depth limit.
-</sub_agent_runtime>
+</sub_agent_runtime>`;
+
+  if (!input.agent) return runtimeBlock;
+
+  return `${runtimeBlock}
 
 <sub_agent_instructions agent="${input.agent.name}" path="${input.agent.path}">
 ${input.agent.content}
@@ -530,11 +534,12 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
   }
 
   async function createRun(args: any, ctx: any, projectPath: string, existingRun?: SubAgentRun): Promise<CreateRunResult> {
-    const agent = catalog.agents.get(args.agent);
-    if (!agent) {
+    const requestedAgent = sanitizeOptionalString(args.agent);
+    const agent = requestedAgent ? catalog.agents.get(requestedAgent) : undefined;
+    if (requestedAgent && !agent) {
       return {
         ok: false,
-        error: `Unknown sub-agent: ${args.agent}. Available agents: ${[...catalog.agents.keys()].sort().join(", ") || "(none)"}`,
+        error: `Unknown sub-agent: ${requestedAgent}. Available agents: ${[...catalog.agents.keys()].sort().join(", ") || "(none)"}`,
       };
     }
 
@@ -554,7 +559,7 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
     }
 
     const agentDir = getAgentDir();
-    const agentBlock = buildSubAgentSystemPrompt({ agent, depth: nextDepth, parentTask: args.prompt });
+    const agentBlock = buildSubAgentSystemPrompt({ agent, depth: nextDepth });
     const loader = new DefaultResourceLoader({
       cwd: projectPath,
       agentDir,
@@ -567,9 +572,10 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
 
     const parentSession = typeof ctx.sessionManager?.getSessionFile === "function" ? ctx.sessionManager.getSessionFile() : undefined;
     const childSessionManager = SessionManager.create(projectPath, undefined, { parentSession });
-    childSessionManager.appendSessionInfo(`sub-agent:${args.agent} ${new Date().toISOString()}`);
+    const subAgentLabel = requestedAgent ? `sub-agent:${requestedAgent}` : "sub-agent";
+    childSessionManager.appendSessionInfo(`${subAgentLabel} ${new Date().toISOString()}`);
     childSessionManager.appendCustomEntry("sub-agent-metadata", {
-      agent: args.agent,
+      agent: requestedAgent ?? null,
       parentTask: args.prompt,
       parentSession,
       projectPath,
@@ -593,7 +599,7 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
     const id = `sub_${Date.now()}_${randomUUID().slice(0, 8)}`;
     const run: SubAgentRun = {
       id,
-      agentName: args.agent,
+      agentName: requestedAgent ?? "sub-agent",
       projectPath,
       prompt: args.prompt,
       depth: nextDepth,
@@ -648,7 +654,7 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
 Available agents from ${AGENTS_DIR}:
 ${availableAgents}
 
-Important: the "agent" argument here is a sub-agent name from a Markdown filename under ${AGENTS_DIR}.${diagnostics}`,
+Important: the "agent" argument is optional. Omit it to create a generic sub-agent that builds its own system prompt from the same workspace configuration. When provided, "agent" must be a sub-agent name from a Markdown filename under ${AGENTS_DIR}.${diagnostics}`,
     promptSnippet: "Create or continue a recursive delegated sub-agent session for independent work",
     promptGuidelines: [
       "Use sub_agent to delegate independent subtasks to named recursive sub-agents when work can be parallelized or isolated.",
@@ -657,7 +663,7 @@ Important: the "agent" argument here is a sub-agent name from a Markdown filenam
     ],
     parameters: Type.Object({
       prompt: Type.String({ description: "Task description to send to the new session" }),
-      agent: Type.String({ description: `Sub-agent name to run this task. Available agents: ${[...catalog.agents.keys()].sort().join(", ")}` }),
+      agent: Type.Optional(Type.String({ description: `Optional sub-agent name to run this task. Omit to use a generic sub-agent with the same workspace configuration. Available agents: ${[...catalog.agents.keys()].sort().join(", ")}` })),
       run_in_background: Type.Boolean({ description: "Execution mode: true for async, false for sync" }),
       existing_session_id: Type.Optional(Type.String({ description: "Existing delegated sub-agent session ID to continue (must be a real session ID previously returned by sub_agent, e.g. sub_...)" })),
       project_path: Type.Optional(Type.String({ description: "Project path for the new session (defaults to caller's project path)" })),
