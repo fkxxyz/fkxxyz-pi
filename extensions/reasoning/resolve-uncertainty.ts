@@ -10,7 +10,7 @@ When design decisions are uncertain during execution, use established project co
 
 When API, interface, library, or codebase details are uncertain, investigate directly through available tools, code exploration, documentation, or web search instead of asking the user questions that research can answer.
 
-When the location of configuration is uncertain, check canonical config paths implied by the task domain before broad searches. Use wide `rg` or `find` only after targeted paths are missing, insufficient, or genuinely unknown; avoid noisy home-directory searches unless the scope requires them.
+When the location of configuration is uncertain, check canonical config paths implied by the task domain before broad searches. Use wide \`rg\` or \`find\` only after targeted paths are missing, insufficient, or genuinely unknown; avoid noisy home-directory searches unless the scope requires them.
 
 Avoid guessing when uncertainty is resolvable. Escalate to the user only when the missing information depends on their intent, preference, credentials, permissions, or business constraints.`;
 
