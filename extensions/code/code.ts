@@ -6,6 +6,7 @@ export default async function code(pi: ExtensionAPI) {
 
 	await load("../skills/brainstorming.ts");
 	await load("../skills/test-driven-development.ts");
+	await load("../skills/structured-delegation.ts");
 	await load("../reasoning/reasoning.ts");
 	await load("../exa/exa-mcp.ts");
 	await load("../sub-agent/sub-agent.ts");
