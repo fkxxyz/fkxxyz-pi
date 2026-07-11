@@ -139,6 +139,7 @@ Useful workspaces include:
 - `extensions/exa/exa-mcp.ts` bridges Exa MCP tools when `exaMcp.url` is configured.
 - `extensions/system-prompt/simplify-system-prompt.ts` simplifies pi's default prompt and blocks image inputs.
 - `extensions/tool-policy/disable-basic-tools.ts` removes and hard-blocks the built-in `bash`, `read`, `edit`, and `write` tools.
+- `extensions/tool-policy/read-with-line-numbers.ts` overrides `read` so text output includes 1-based line numbers while preserving offset/limit continuation hints.
 
 ## Git Hygiene
 

@@ -13,6 +13,7 @@ export default async function code(pi: ExtensionAPI) {
 	await load("./lsp-tools.ts");
 	await load("./frontend-development.ts");
 	await load("./systematic-debugging.ts");
+	await load("../tool-policy/read-with-line-numbers.ts");
 	await load("../environment/shared-skill-discovery.ts");
 	await load("../environment/arch-package-management.ts");
 	await load("../environment/project-directory-rules.ts");
