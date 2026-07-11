@@ -10,7 +10,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync } from "node:fs";
-import { lstat, readdir, readFile, realpath, stat } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, extname, isAbsolute, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -422,6 +422,41 @@ async function scanAgentsDirectory(root: string): Promise<AgentCatalog> {
   return { agents, diagnostics };
 }
 
+async function createForkBranchSessionFile(input: {
+  sessionManager: any;
+  parentSession: string;
+  parentCwd: string;
+}) {
+  const leafId = typeof input.sessionManager?.getLeafId === "function" ? input.sessionManager.getLeafId() : undefined;
+  const branchEntries = leafId && typeof input.sessionManager?.getBranch === "function"
+    ? input.sessionManager.getBranch(leafId)
+    : undefined;
+  const sessionDir = typeof input.sessionManager?.getSessionDir === "function" ? input.sessionManager.getSessionDir() : undefined;
+
+  if (!leafId || !Array.isArray(branchEntries) || branchEntries.length === 0 || !sessionDir) {
+    return undefined;
+  }
+
+  await mkdir(sessionDir, { recursive: true });
+
+  const sessionId = `subfork_${Date.now()}_${randomUUID().slice(0, 8)}`;
+  const timestamp = new Date().toISOString();
+  const fileTimestamp = timestamp.replace(/[:.]/g, "-");
+  const branchFile = join(sessionDir, `${fileTimestamp}_${sessionId}.jsonl`);
+  const header = {
+    type: "session",
+    version: 3,
+    id: sessionId,
+    timestamp,
+    cwd: resolve(input.parentCwd),
+    parentSession: input.parentSession,
+  };
+
+  const lines = [header, ...branchEntries].map((entry) => JSON.stringify(entry)).join("\n") + "\n";
+  await writeFile(branchFile, lines, { flag: "wx" });
+  return branchFile;
+}
+
 async function readReferenceDocs(projectPath: string, referenceDocs: string[] | undefined) {
   if (!referenceDocs || referenceDocs.length === 0) return { ok: true as const, block: "" };
 
@@ -535,11 +570,13 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
 
   async function createRun(args: any, ctx: any, projectPath: string, existingRun?: SubAgentRun): Promise<CreateRunResult> {
     const requestedAgent = sanitizeOptionalString(args.agent);
-    const agent = requestedAgent ? catalog.agents.get(requestedAgent) : undefined;
-    if (requestedAgent && !agent) {
+    const forkMode = requestedAgent === "fork";
+    const effectiveRequestedAgent = forkMode ? undefined : requestedAgent;
+    const agent = effectiveRequestedAgent ? catalog.agents.get(effectiveRequestedAgent) : undefined;
+    if (effectiveRequestedAgent && !agent) {
       return {
         ok: false,
-        error: `Unknown sub-agent: ${requestedAgent}. Available agents: ${[...catalog.agents.keys()].sort().join(", ") || "(none)"}`,
+        error: `Unknown sub-agent: ${effectiveRequestedAgent}. Available agents: ${[...catalog.agents.keys()].sort().join(", ") || "(none)"}`,
       };
     }
 
@@ -571,11 +608,32 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
     });
 
     const parentSession = typeof ctx.sessionManager?.getSessionFile === "function" ? ctx.sessionManager.getSessionFile() : undefined;
-    const childSessionManager = SessionManager.create(projectPath, undefined, { parentSession });
-    const subAgentLabel = requestedAgent ? `sub-agent:${requestedAgent}` : "sub-agent";
+    let childSessionManager: SessionManager;
+
+    if (forkMode) {
+      const branchFile = parentSession
+        ? await createForkBranchSessionFile({ sessionManager: ctx.sessionManager, parentSession, parentCwd: ctx.cwd })
+        : undefined;
+
+      if (!branchFile) {
+        return {
+          ok: false,
+          error: "fork mode requires a persisted parent session with a current leaf",
+        };
+      }
+
+      childSessionManager = resolve(projectPath) === resolve(ctx.cwd)
+        ? SessionManager.open(branchFile, undefined, projectPath)
+        : SessionManager.forkFrom(branchFile, projectPath);
+    } else {
+      childSessionManager = SessionManager.create(projectPath, undefined, { parentSession });
+    }
+
+    const subAgentLabel = forkMode ? "sub-agent:fork" : requestedAgent ? `sub-agent:${requestedAgent}` : "sub-agent";
     childSessionManager.appendSessionInfo(`${subAgentLabel} ${new Date().toISOString()}`);
     childSessionManager.appendCustomEntry("sub-agent-metadata", {
-      agent: requestedAgent ?? null,
+      agent: effectiveRequestedAgent ?? null,
+      mode: forkMode ? "fork" : "isolated",
       parentTask: args.prompt,
       parentSession,
       projectPath,
@@ -599,7 +657,7 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
     const id = `sub_${Date.now()}_${randomUUID().slice(0, 8)}`;
     const run: SubAgentRun = {
       id,
-      agentName: requestedAgent ?? "sub-agent",
+      agentName: forkMode ? "fork" : requestedAgent ?? "sub-agent",
       projectPath,
       prompt: args.prompt,
       depth: nextDepth,
@@ -654,7 +712,7 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
 Available agents from ${AGENTS_DIR}:
 ${availableAgents}
 
-Important: the "agent" argument is optional. Omit it to create a generic sub-agent that builds its own system prompt from the same workspace configuration. When provided, "agent" must be a sub-agent name from a Markdown filename under ${AGENTS_DIR}.${diagnostics}`,
+Important: the "agent" argument is optional. Omit it to create a generic sub-agent that builds its own system prompt from the same workspace configuration. When provided, "agent" must be a sub-agent name from a Markdown filename under ${AGENTS_DIR}. Special value: agent="fork" forks the parent session's current conversation branch instead of selecting a named agent; this takes precedence over any agent named "fork".${diagnostics}`,
     promptSnippet: "Create or continue a recursive delegated sub-agent session for independent work",
     promptGuidelines: [
       "Use sub_agent to delegate independent subtasks to named recursive sub-agents when work can be parallelized or isolated.",
@@ -663,7 +721,7 @@ Important: the "agent" argument is optional. Omit it to create a generic sub-age
     ],
     parameters: Type.Object({
       prompt: Type.String({ description: "Task description to send to the new session" }),
-      agent: Type.Optional(Type.String({ description: `Optional sub-agent name to run this task. Omit to use a generic sub-agent with the same workspace configuration. Available agents: ${[...catalog.agents.keys()].sort().join(", ")}` })),
+      agent: Type.Optional(Type.String({ description: `Optional sub-agent name to run this task. Omit to use a generic sub-agent with the same workspace configuration. Special value "fork" forks the parent session's current conversation branch and takes precedence over any agent named fork. Available agents: ${[...catalog.agents.keys()].sort().join(", ")}` })),
       run_in_background: Type.Boolean({ description: "Execution mode: true for async, false for sync" }),
       existing_session_id: Type.Optional(Type.String({ description: "Existing delegated sub-agent session ID to continue (must be a real session ID previously returned by sub_agent, e.g. sub_...)" })),
       project_path: Type.Optional(Type.String({ description: "Project path for the new session (defaults to caller's project path)" })),
