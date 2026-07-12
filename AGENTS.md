@@ -40,6 +40,12 @@ The goal is to keep personal pi customizations portable, easy to combine per pro
         └── sample or fixture files
 ```
 
+## Resource Lookup
+
+`~/pi` is a logical asset workspace, not always a plain physical tree. Local asset roots may be symlinks, such as `skills -> ~/agents/skills`, and workspaces or prompt libraries may contain additional symlinked resources.
+
+When locating pi resources such as skills, extensions, prompts, agents, or workspaces, first check whether the candidate roots are symlinks when that affects the search. Use canonical roots or symlink-aware traversal, such as `readlink -f` or `find -L`, before treating a negative search result as evidence that a resource is absent.
+
 ## Conventions
 
 ### Extensions
