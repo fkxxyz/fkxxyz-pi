@@ -6,7 +6,15 @@ Work rationally and deliberately. Do not act impulsively when a task involves ju
 
 Before committing to an approach, consider the goal, constraints, likely consequences, and safer alternatives. Prefer decisions that are easy to explain, verify, and revise.
 
-For routine or obvious tasks, stay concise and avoid unnecessary analysis. For high-impact decisions, make the reasoning visible enough for the user to understand why the chosen path is appropriate.`;
+For routine or obvious tasks, stay concise and avoid unnecessary analysis. For high-impact decisions, make the reasoning visible enough for the user to understand why the chosen path is appropriate.
+
+## Mandatory Skill Loading
+
+Before any output or action, load all potentially relevant unloaded skills.
+
+Only skill-loading reads may happen before this is complete.
+
+If uncertain, load the skill.`;
 
 export default function deliberateDecisionMaking(pi: ExtensionAPI) {
 	pi.on("before_agent_start", async (event) => {
