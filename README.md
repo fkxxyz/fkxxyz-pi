@@ -87,7 +87,27 @@ The sub-agent extension loads named agents from TypeScript index files instead o
 
 The global index loads first. A project's `.pi/agents.ts` loads second and shallow-merges same-name agents over the global entry, so a project can override only fields such as `description` while inheriting the prompt source.
 
-Each agent needs a `description` for parent-agent selection and exactly one source after merge:
+Agent indexes support both the legacy flat shape and a structured catalog shape. Use the structured shape when a workspace needs a first-class main agent:
+
+```ts
+export default {
+  mainAgent: "main",
+  agents: {
+    main: {
+      description: "Primary workspace coordinator",
+      systemPromptFile: "./prompts/main.md",
+    },
+    helper: {
+      description: "Focused helper for this project",
+      systemPromptFile: "./prompts/helper.md",
+    },
+  },
+};
+```
+
+`mainAgent` is injected into normal parent sessions by `extensions/agent-runtime/agent-runtime.ts`. Child sessions created by the sub-agent extension filter that runtime extension from their resource loader, so sub-agents receive only their requested named-agent prompt and not the main agent prompt.
+
+Each agent needs a `description` for parent-agent selection and exactly one source after merge. The legacy flat shape is still valid:
 
 ```ts
 export default {

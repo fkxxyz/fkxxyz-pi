@@ -18,6 +18,7 @@ import { pathToFileURL } from "node:url";
 
 const GLOBAL_AGENTS_FILE = join(homedir(), "pi", "agents.ts");
 const PROJECT_AGENTS_FILE = join(".pi", "agents.ts");
+const AGENT_RUNTIME_EXTENSION_SUFFIX = "/extensions/agent-runtime/agent-runtime.ts";
 const POLL_INTERVAL_MS = 1000;
 const MAX_DEPTH = 8;
 const SUB_AGENT_ID_EPOCH_MS = Date.UTC(2000, 0, 1);
@@ -40,6 +41,7 @@ type AgentDefinition = {
 
 type AgentCatalog = {
   agents: Map<string, AgentDefinition>;
+  mainAgent?: string;
   diagnostics: string[];
 };
 
@@ -389,6 +391,23 @@ function resolveConfigPath(value: string, baseDir: string) {
   return isAbsolute(value) ? value : resolve(baseDir, value);
 }
 
+function normalizePathForComparison(value: string) {
+  return value.replace(/\\/g, "/");
+}
+
+function isAgentRuntimeExtension(extension: unknown) {
+  if (!isPlainObject(extension)) return false;
+  const candidates = [extension.resolvedPath, extension.path].filter((value): value is string => typeof value === "string");
+  return candidates.some((value) => normalizePathForComparison(value).endsWith(AGENT_RUNTIME_EXTENSION_SUFFIX));
+}
+
+function filterAgentRuntimeExtension<T extends { extensions: unknown[] }>(base: T): T {
+  return {
+    ...base,
+    extensions: base.extensions.filter((extension) => !isAgentRuntimeExtension(extension)),
+  };
+}
+
 function normalizeAgentDefinition(name: string, raw: unknown, configPath: string, diagnostics: string[]): AgentDefinition | null {
   if (!isPlainObject(raw)) {
     diagnostics.push(`Agent "${name}" in ${configPath} must be an object`);
@@ -448,13 +467,19 @@ async function loadAgentsFile(configPath: string): Promise<AgentCatalog> {
 
   let moduleExports: any;
   try {
-    moduleExports = await import(`${pathToFileURL(configPath).href}?mtime=${Date.now()}`);
+    moduleExports = await import(`${pathToFileURL(configPath).href}?cache=${Date.now()}-${randomUUID()}`);
   } catch (error) {
     diagnostics.push(`Could not import ${configPath}: ${extractHelpfulErrorMessage(error)}`);
     return { agents: new Map(), diagnostics };
   }
 
-  const rawAgents = moduleExports.default ?? moduleExports.agents;
+  const rawModule = moduleExports.default ?? moduleExports;
+  const rawAgents = isPlainObject(rawModule) && isPlainObject(rawModule.agents)
+    ? rawModule.agents
+    : moduleExports.default ?? moduleExports.agents;
+  const mainAgent = isPlainObject(rawModule) && typeof rawModule.mainAgent === "string" && rawModule.mainAgent
+    ? rawModule.mainAgent
+    : undefined;
   if (!isPlainObject(rawAgents)) {
     diagnostics.push(`${configPath} must export an agents object as default export or named export "agents"`);
     return { agents: new Map(), diagnostics };
@@ -466,13 +491,14 @@ async function loadAgentsFile(configPath: string): Promise<AgentCatalog> {
     if (definition) agents.set(name, definition);
   }
 
-  return { agents, diagnostics };
+  return { agents, mainAgent, diagnostics };
 }
 
 async function loadAgentCatalog(projectPath: string): Promise<AgentCatalog> {
   const globalCatalog = await loadAgentsFile(GLOBAL_AGENTS_FILE);
   const projectCatalog = await loadAgentsFile(resolve(projectPath, PROJECT_AGENTS_FILE));
   const agents = new Map(globalCatalog.agents);
+  const mainAgent = projectCatalog.mainAgent ?? globalCatalog.mainAgent;
   const diagnostics = [...globalCatalog.diagnostics, ...projectCatalog.diagnostics];
 
   for (const [name, definition] of projectCatalog.agents) {
@@ -488,7 +514,15 @@ async function loadAgentCatalog(projectPath: string): Promise<AgentCatalog> {
     }
   }
 
-  return { agents, diagnostics };
+  if (mainAgent && !agents.has(mainAgent)) {
+    diagnostics.push(`mainAgent "${mainAgent}" is not defined in merged agent catalog`);
+  }
+
+  if (mainAgent) {
+    agents.delete(mainAgent);
+  }
+
+  return { agents, mainAgent, diagnostics };
 }
 
 async function resolveAgentSystemPrompt(agent: AgentDefinition): Promise<string | null> {
@@ -759,6 +793,7 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
     const loader = new DefaultResourceLoader({
       cwd: sessionProjectPath,
       agentDir,
+      extensionsOverride: filterAgentRuntimeExtension,
       appendSystemPromptOverride: (base: string[]) => [...base, agentBlock],
     });
 

@@ -1,5 +1,4 @@
 import { describe, expect, mock, test } from "bun:test";
-import { existsSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -109,22 +108,12 @@ async function loadSubAgentExtension() {
 describe("sub_agent agents.ts project catalog", () => {
 	test("shallow-merges project agent fields over global agents", async () => {
 		lastResourceLoaderOptions = undefined;
-		const globalAgentsPath = resolve("agents.ts");
-		const originalGlobal = existsSync(globalAgentsPath) ? readFileSync(globalAgentsPath, "utf8") : null;
 		const projectDir = join(tmpdir(), `pi-sub-agent-merge-${Date.now()}`);
 		await mkdir(join(projectDir, ".pi"), { recursive: true });
-		writeFileSync(globalAgentsPath, `
-export default {
-  helper: {
-    description: "Global helper",
-    systemPrompt: "global prompt"
-  }
-};
-`);
 		await writeFile(join(projectDir, ".pi", "agents.ts"), `
 export default {
-  helper: {
-    description: "Project helper"
+  researcher: {
+    description: "Project researcher override"
   }
 };
 `);
@@ -134,10 +123,10 @@ export default {
 			process.chdir(projectDir);
 			const tool = await loadSubAgentExtension();
 			process.chdir(originalCwd);
-			expect(tool.description).toContain("helper: Project helper");
+			expect(tool.description).toContain("researcher: Project researcher override");
 			const result = await tool.execute(
 				"call-merge-agent",
-				{ prompt: "do work", agent: "helper", project_path: projectDir, run_in_background: false },
+				{ prompt: "do work", agent: "researcher", project_path: projectDir, run_in_background: false },
 				undefined,
 				undefined,
 				{ cwd: process.cwd(), sessionManager: { getSessionFile: () => undefined } },
@@ -145,11 +134,9 @@ export default {
 
 			expect(JSON.parse(result.content[0].text)).toEqual({ session_id: expect.any(String), response: "done" });
 			const appended = lastResourceLoaderOptions.appendSystemPromptOverride([]).join("\n");
-			expect(appended).toContain("global prompt");
+			expect(appended).toContain("You are **researcher**");
 		} finally {
 			process.chdir(originalCwd);
-			if (originalGlobal === null) rmSync(globalAgentsPath, { force: true });
-			else writeFileSync(globalAgentsPath, originalGlobal);
 			await rm(projectDir, { recursive: true, force: true });
 		}
 	});
@@ -181,6 +168,97 @@ export default {
 			expect(JSON.parse(result.content[0].text)).toEqual({ session_id: expect.any(String), response: "done" });
 			const appended = lastResourceLoaderOptions.appendSystemPromptOverride([]).join("\n");
 			expect(appended).toContain("file prompt");
+		} finally {
+			await rm(projectDir, { recursive: true, force: true });
+		}
+	});
+
+	test("loads nested agents.ts catalog format without treating mainAgent as an agent", async () => {
+		lastResourceLoaderOptions = undefined;
+		const projectDir = join(tmpdir(), `pi-sub-agent-nested-catalog-${Date.now()}`);
+		await mkdir(join(projectDir, ".pi"), { recursive: true });
+		await writeFile(join(projectDir, ".pi", "agents.ts"), `
+export default {
+  mainAgent: "main",
+  agents: {
+    main: {
+      description: "Main coordinator",
+      systemPrompt: "main prompt"
+    },
+    helper: {
+      description: "Nested helper",
+      systemPrompt: "nested helper prompt"
+    }
+  }
+};
+`);
+
+		const originalCwd = process.cwd();
+		try {
+			process.chdir(projectDir);
+			const tool = await loadSubAgentExtension();
+			process.chdir(originalCwd);
+			expect(tool.description).toContain("helper: Nested helper");
+			expect(tool.description).not.toContain("main: Main coordinator");
+			expect(tool.description).not.toContain("mainAgent");
+
+			await tool.execute(
+				"call-nested-agent",
+				{ prompt: "do work", agent: "helper", project_path: projectDir, run_in_background: false },
+				undefined,
+				undefined,
+				{ cwd: process.cwd(), sessionManager: { getSessionFile: () => undefined } },
+			);
+
+			const appended = lastResourceLoaderOptions.appendSystemPromptOverride([]).join("\n");
+			expect(appended).toContain('agent="helper"');
+			expect(appended).toContain("nested helper prompt");
+			expect(appended).not.toContain("main prompt");
+		} finally {
+			process.chdir(originalCwd);
+			await rm(projectDir, { recursive: true, force: true });
+		}
+	});
+
+	test("filters the main agent runtime extension from child resource loaders", async () => {
+		lastResourceLoaderOptions = undefined;
+		const projectDir = join(tmpdir(), `pi-sub-agent-filter-runtime-${Date.now()}`);
+		await mkdir(join(projectDir, ".pi"), { recursive: true });
+		await writeFile(join(projectDir, ".pi", "agents.ts"), `
+export default {
+  helper: {
+    description: "Project helper agent",
+    systemPrompt: "helper prompt"
+  }
+};
+`);
+
+		try {
+			const tool = await loadSubAgentExtension();
+			await tool.execute(
+				"call-filter-runtime",
+				{ prompt: "do work", agent: "helper", project_path: projectDir, run_in_background: false },
+				undefined,
+				undefined,
+				{ cwd: process.cwd(), sessionManager: { getSessionFile: () => undefined } },
+			);
+
+			const agentRuntimeExtension = {
+				path: "../../../extensions/agent-runtime/agent-runtime.ts",
+				resolvedPath: resolve("extensions/agent-runtime/agent-runtime.ts"),
+			};
+			const otherExtension = {
+				path: "../../../extensions/tool-policy/disable-basic-tools.ts",
+				resolvedPath: resolve("extensions/tool-policy/disable-basic-tools.ts"),
+			};
+
+			const filtered = lastResourceLoaderOptions.extensionsOverride({
+				extensions: [agentRuntimeExtension, otherExtension],
+				errors: [],
+				runtime: {},
+			});
+
+			expect(filtered.extensions).toEqual([otherExtension]);
 		} finally {
 			await rm(projectDir, { recursive: true, force: true });
 		}

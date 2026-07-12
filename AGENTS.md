@@ -101,7 +101,27 @@ Named sub-agents are registered through TypeScript index files, not by automatic
 
 The global index loads first. A workspace-local `.pi/agents.ts` loads second for the target project and shallow-merges same-name entries over global entries. Use this when a project needs to override a description or replace one prompt source without redefining every global agent.
 
-Each agent entry should include a `description` for the parent agent and exactly one source after merge:
+Agent indexes may use the legacy flat shape or the structured catalog shape. Use the structured shape when a workspace needs a first-class main agent:
+
+```ts
+export default {
+  mainAgent: "main",
+  agents: {
+    main: {
+      description: "Primary workspace coordinator",
+      systemPromptFile: "./prompts/main.md",
+    },
+    helper: {
+      description: "Focused helper for this workspace",
+      systemPromptFile: "./prompts/helper.md",
+    },
+  },
+};
+```
+
+`mainAgent` names the agent prompt injected into normal parent sessions by the agent-runtime extension. The sub-agent extension filters that runtime extension out of child resource loaders, so child sessions do not receive the main agent prompt; they receive only the requested named sub-agent prompt. This separation prevents main-agent delegation instructions from recursively leaking into worker agents.
+
+Each agent entry should include a `description` for the parent agent and exactly one source after merge. The legacy flat shape remains valid for catalogs without a main agent:
 
 ```ts
 export default {
