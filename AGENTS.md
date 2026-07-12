@@ -46,6 +46,8 @@ The goal is to keep personal pi customizations portable, easy to combine per pro
 
 When locating pi resources such as skills, extensions, prompts, agents, or workspaces, first check whether the candidate roots are symlinks when that affects the search. Use canonical roots or symlink-aware traversal, such as `readlink -f` or `find -L`, before treating a negative search result as evidence that a resource is absent.
 
+Keep resource discovery bounded by the known asset model. For skills, first try the loaded skill metadata and direct canonical paths such as `~/agents/skills/<name>/SKILL.md`, then search only known skill roots, workspace `.pi/skills/`, or relevant pi extension/index files. Do not use `$HOME`-wide recursive `find` or `rg` as a default way to discover pi assets; broad searches are a fallback only after narrower roots fail and the wider scope is justified.
+
 ## Conventions
 
 ### Extensions
