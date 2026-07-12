@@ -3,6 +3,7 @@
     "../system-prompt/simplify-system-prompt.ts",
     "../interaction/interaction.ts",
     "../code/code.ts",
-    "../tool-output/tool-output-limiter.ts"
+    "../tool-output/tool-output-limiter.ts",
+    "../skills/thinking-methodology.ts"
   ]
 }
