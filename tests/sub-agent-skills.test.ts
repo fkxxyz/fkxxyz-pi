@@ -10,8 +10,10 @@ let toolDefinitions: any[] = [];
 let lastSessionManager: any;
 let lastResourceLoaderOptions: any;
 let lastCreateAgentSessionOptions: any;
+let nextChildSessionFile: string | undefined;
+let openedSessionFiles: string[] = [];
 
-function makeChildSessionManager(kind: string) {
+function makeChildSessionManager(kind: string, sessionFile?: string) {
 	return {
 		kind,
 		appendSessionInfo() {
@@ -21,7 +23,10 @@ function makeChildSessionManager(kind: string) {
 			sessionManagerCalls.push(`${kind}:appendCustomEntry:${JSON.stringify(data)}`);
 		},
 		getSessionFile() {
-			return `/tmp/${kind}.jsonl`;
+			return sessionFile ?? `/tmp/${kind}/2026-07-12T00-00-00-000Z_019f5262-95f7-7785-bccc-150b1c6295c0.jsonl`;
+		},
+		getCwd() {
+			return tmpdir();
 		},
 	};
 }
@@ -55,12 +60,14 @@ mock.module("@earendil-works/pi-coding-agent", () => ({
 	initTheme: () => undefined,
 	SessionManager: {
 		create: () => {
-			createdSessionManager = makeChildSessionManager("create");
+			createdSessionManager = makeChildSessionManager("create", nextChildSessionFile);
+			nextChildSessionFile = undefined;
 			return createdSessionManager;
 		},
 		open: (path: string) => {
+			openedSessionFiles.push(path);
 			sessionManagerCalls.push(`open:${path}`);
-			return makeChildSessionManager("open");
+			return makeChildSessionManager("open", path);
 		},
 		forkFrom: (source: string, target: string) => {
 			sessionManagerCalls.push(`forkFrom:${source}:${target}`);
@@ -85,6 +92,8 @@ mock.module("typebox", () => ({
 
 async function loadSubAgentExtension() {
 	toolDefinitions = [];
+	openedSessionFiles = [];
+	nextChildSessionFile = undefined;
 	const { default: subAgentExtension } = await import("../extensions/sub-agent/sub-agent.ts");
 	await subAgentExtension({
 		on() {},
@@ -258,7 +267,7 @@ export default {
 		expect(tool.description).toContain("Use agent=\"fork\" sparingly");
 		expect(tool.description).toContain("Fork is not a specialized worker; it is a context-inheritance mode");
 		expect(tool.description).toContain("reference_docs and fork are independent optimizations");
-		expect(tool.description).toContain("Use existing_session_id only to continue the same live child session");
+		expect(tool.description).toContain("Use existing_session_id only to continue the same child session");
 		expect(tool.description).toContain("Do not provide project_path or agent with existing_session_id");
 		expect(tool.description).toContain("relative reference_docs paths resolve against that existing session's project path");
 		expect(tool.promptGuidelines).toContain("Use sub_agent only when an independently executable child task has clear payoff: parallelism, isolation, specialized behavior, independent review, context preservation, or filtering noisy output.");
@@ -271,7 +280,7 @@ export default {
 		expect(tool.parameters.reference_docs.optional).toBe(true);
 		expect(tool.parameters.agent.description).toContain("Do not provide agent with existing_session_id");
 		expect(tool.parameters.project_path.description).toContain("Do not provide project_path with existing_session_id");
-		expect(tool.parameters.existing_session_id.description).toContain("Mutually exclusive with project_path and agent");
+		expect(tool.parameters.existing_session_id.description).toContain("Use only to continue, refine, follow up, or correct work");
 		expect(tool.parameters.reference_docs.description).toContain("paths are much shorter, faster, or more accurate");
 		expect(tool.parameters.reference_docs.description).toContain("existing session's original project path");
 	});
@@ -310,6 +319,92 @@ export default {
 			session_id: sessionID,
 			error: "agent cannot be used with existing_session_id; continuing an existing sub-agent keeps its original agent identity and fork/isolated mode. To use a different agent or mode, omit existing_session_id and create a new sub-agent session.",
 		});
+	});
+
+	test("returns compact stateless session ids from persisted session file names", async () => {
+		const tool = await loadSubAgentExtension();
+		const projectDir = join(tmpdir(), `pi-sub-agent-short-id-${Date.now()}`);
+		const sessionDirName = `--${resolve(projectDir).replace(/^[\\/]/, "").replace(/[\\/:]/g, "-")}--`;
+		const sessionFile = join(tmpdir(), "pi-agent", "sessions", sessionDirName, "2026-07-12T00-00-00-000Z_019f5262-95f7-7785-bccc-150b1c6295c0.jsonl");
+		nextChildSessionFile = sessionFile;
+
+		const result = await tool.execute(
+			"call-short-id",
+			{ prompt: "start", project_path: projectDir, run_in_background: false },
+			undefined,
+			undefined,
+			{ cwd: projectDir, sessionManager: { getSessionFile: () => undefined } },
+		);
+
+		const payload = JSON.parse(result.content[0].text);
+		const expectedTime = (Date.parse("2026-07-12T00:00:00.000Z") - Date.UTC(2000, 0, 1)).toString(36);
+		expect(payload.session_id).toBe(`${expectedTime}_1c6295c0`);
+		expect(payload.session_id.length).toBeLessThanOrEqual(18);
+	});
+
+	test("reopens compact session ids by scanning the parent project session directory before global sessions", async () => {
+		const projectDir = join(tmpdir(), `pi-sub-agent-reopen-${Date.now()}`);
+		const agentDir = "/tmp/pi-agent-dir";
+		const parentSessionDir = join(agentDir, "sessions", `--${resolve(projectDir).replace(/^[\\/]/, "").replace(/[\\/:]/g, "-")}--`);
+		const otherSessionDir = join(agentDir, "sessions", "--other-project--");
+		const fileName = "2026-07-12T00-00-00-000Z_019f5262-95f7-7785-bccc-150b1c6295c0.jsonl";
+		await mkdir(parentSessionDir, { recursive: true });
+		await mkdir(otherSessionDir, { recursive: true });
+		await writeFile(join(parentSessionDir, fileName), "");
+		await writeFile(join(otherSessionDir, fileName), "");
+
+		try {
+			const tool = await loadSubAgentExtension();
+			const expectedTime = (Date.parse("2026-07-12T00:00:00.000Z") - Date.UTC(2000, 0, 1)).toString(36);
+			const sessionID = `${expectedTime}_1c6295c0`;
+
+			const result = await tool.execute(
+				"call-reopen",
+				{ prompt: "continue", existing_session_id: sessionID, run_in_background: false },
+				undefined,
+				undefined,
+				{ cwd: projectDir, sessionManager: { getSessionFile: () => undefined } },
+			);
+
+			expect(JSON.parse(result.content[0].text)).toEqual({ session_id: sessionID, response: "done" });
+			expect(openedSessionFiles[0]).toBe(join(parentSessionDir, fileName));
+		} finally {
+			await rm(join(agentDir, "sessions"), { recursive: true, force: true });
+		}
+	});
+
+	test("sub_agent_result resolves compact ids through the cached/scanned session index", async () => {
+		const projectDir = join(tmpdir(), `pi-sub-agent-result-${Date.now()}`);
+		const agentDir = "/tmp/pi-agent-dir";
+		const parentSessionDir = join(agentDir, "sessions", `--${resolve(projectDir).replace(/^[\\/]/, "").replace(/[\\/:]/g, "-")}--`);
+		const fileName = "2026-07-12T00-00-00-000Z_019f5262-95f7-7785-bccc-150b1c6295c0.jsonl";
+		await mkdir(parentSessionDir, { recursive: true });
+		await writeFile(join(parentSessionDir, fileName), "");
+
+		try {
+			await loadSubAgentExtension();
+			const resultTool = toolDefinitions.find((tool) => tool.name === "sub_agent_result");
+			const expectedTime = (Date.parse("2026-07-12T00:00:00.000Z") - Date.UTC(2000, 0, 1)).toString(36);
+			const sessionID = `${expectedTime}_1c6295c0`;
+
+			const result = await resultTool.execute(
+				"call-result",
+				{ session_ids: [sessionID], wait: "none" },
+				undefined,
+				undefined,
+				{ cwd: projectDir, sessionManager: { getSessionFile: () => undefined } },
+			);
+
+			const payload = JSON.parse(result.content[0].text);
+			expect(payload[0]).toMatchObject({
+				session_id: sessionID,
+				session_file: join(parentSessionDir, fileName),
+				status: "completed",
+				content: "done",
+			});
+		} finally {
+			await rm(join(agentDir, "sessions"), { recursive: true, force: true });
+		}
 	});
 });
 

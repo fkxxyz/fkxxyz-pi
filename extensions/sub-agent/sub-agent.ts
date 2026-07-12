@@ -10,9 +10,9 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -25,6 +25,10 @@ const SUBAGENT_SKILL_PATHS = [
 ].map((path) => fileURLToPath(new URL(path, import.meta.url)));
 const POLL_INTERVAL_MS = 1000;
 const MAX_DEPTH = 8;
+const SUB_AGENT_ID_EPOCH_MS = Date.UTC(2000, 0, 1);
+const SHORT_SESSION_ID_PATTERN = /^[0-9a-z]{1,9}_[0-9a-f]{8}$/;
+const SESSION_FILE_TIMESTAMP_PATTERN = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z_/;
+const SESSION_FILE_HASH_PATTERN = /([0-9a-f]{8})(?:\.jsonl)$/i;
 
 type AgentResultStatus = "running" | "completed" | "error" | "not_found" | "stopped";
 type WaitMode = "none" | "any" | "all";
@@ -154,6 +158,66 @@ function sanitizeDurationMs(value: unknown): number {
 
 function sanitizeStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function getDefaultSessionDirForCwd(cwd: string, agentDir = getAgentDir()) {
+  const resolvedCwd = resolve(cwd);
+  const safePath = `--${resolvedCwd.replace(/^[\\/]/, "").replace(/[\\/:]/g, "-")}--`;
+  return join(resolve(agentDir), "sessions", safePath);
+}
+
+function parseSessionFileTimestampMs(fileName: string): number | null {
+  const match = fileName.match(SESSION_FILE_TIMESTAMP_PATTERN);
+  if (!match) return null;
+
+  const [, date, hour, minute, second, millisecond] = match;
+  const iso = `${date}T${hour}:${minute}:${second}.${millisecond}Z`;
+  const time = Date.parse(iso);
+  return Number.isFinite(time) ? time : null;
+}
+
+function shortSessionIdFromFileName(fileName: string): string | null {
+  const timestampMs = parseSessionFileTimestampMs(fileName);
+  const hashMatch = fileName.match(SESSION_FILE_HASH_PATTERN);
+  if (timestampMs === null || !hashMatch) return null;
+
+  const sinceEpoch = timestampMs - SUB_AGENT_ID_EPOCH_MS;
+  if (!Number.isSafeInteger(sinceEpoch) || sinceEpoch < 0) return null;
+
+  return `${sinceEpoch.toString(36)}_${hashMatch[1]!.toLowerCase()}`;
+}
+
+function shortSessionIdFromSessionFile(sessionFile: string | undefined): string | null {
+  if (!sessionFile) return null;
+  return shortSessionIdFromFileName(basename(sessionFile));
+}
+
+async function walkSessionFiles(dir: string): Promise<string[]> {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const files: string[] = [];
+  for (const entry of entries) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...await walkSessionFiles(path));
+    } else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+      files.push(path);
+    }
+  }
+  return files;
+}
+
+function isShortSessionId(value: unknown): value is string {
+  return typeof value === "string" && SHORT_SESSION_ID_PATTERN.test(value);
+}
+
+function makeLegacyRunID() {
+  return `sub_${Date.now()}_${randomUUID().slice(0, 8)}`;
 }
 
 function extractHelpfulErrorMessage(error: unknown): string {
@@ -539,6 +603,36 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
   const currentDepth = depthContext.getStore() ?? 0;
   const startupCatalog = await loadAgentCatalog(process.cwd());
   const runs = new Map<string, SubAgentRun>();
+  const shortSessionIndex = new Map<string, string>();
+  const scannedSessionDirs = new Set<string>();
+  let scannedAllSessions = false;
+
+  async function indexSessionDir(dir: string) {
+    const resolvedDir = resolve(dir);
+    if (scannedSessionDirs.has(resolvedDir)) return;
+    scannedSessionDirs.add(resolvedDir);
+
+    for (const file of await walkSessionFiles(resolvedDir)) {
+      const id = shortSessionIdFromSessionFile(file);
+      if (id && !shortSessionIndex.has(id)) shortSessionIndex.set(id, file);
+    }
+  }
+
+  async function resolveShortSessionFile(sessionID: string, preferredProjectPath: string) {
+    const cached = shortSessionIndex.get(sessionID);
+    if (cached) return cached;
+
+    const preferredDir = getDefaultSessionDirForCwd(preferredProjectPath);
+    await indexSessionDir(preferredDir);
+    const preferred = shortSessionIndex.get(sessionID);
+    if (preferred) return preferred;
+
+    if (!scannedAllSessions) {
+      scannedAllSessions = true;
+      await indexSessionDir(join(getAgentDir(), "sessions"));
+    }
+    return shortSessionIndex.get(sessionID);
+  }
 
   pi.on("resources_discover", async () => {
     return {
@@ -586,6 +680,59 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
         if (text) run.partial_content = text;
       }
     });
+  }
+
+  async function reopenRun(sessionID: string, sessionFile: string, projectPath: string, ctx: any): Promise<SubAgentRun> {
+    const childSessionManager = SessionManager.open(sessionFile);
+    const sessionProjectPath = typeof (childSessionManager as any).getCwd === "function"
+      ? (childSessionManager as any).getCwd()
+      : projectPath;
+    const nextDepth = currentDepth + 1;
+    const agentDir = getAgentDir();
+    const loader = new DefaultResourceLoader({
+      cwd: sessionProjectPath,
+      agentDir,
+      appendSystemPromptOverride: (base: string[]) => [
+        ...base,
+        buildSubAgentSystemPrompt({ depth: nextDepth, systemPrompt: null }),
+      ],
+    });
+
+    await depthContext.run(nextDepth, async () => {
+      await loader.reload();
+    });
+
+    const { session } = await depthContext.run(nextDepth, async () =>
+      createAgentSession({
+        cwd: sessionProjectPath,
+        agentDir,
+        model: ctx.model ?? undefined,
+        modelRegistry: ctx.modelRegistry,
+        thinkingLevel: pi.getThinkingLevel(),
+        tools: pi.getActiveTools(),
+        resourceLoader: loader,
+        sessionManager: childSessionManager,
+      }),
+    );
+
+    const text = extractLastAssistantText(session);
+    const run: SubAgentRun = {
+      id: sessionID,
+      agentName: "sub-agent",
+      projectPath: sessionProjectPath,
+      prompt: "",
+      depth: nextDepth,
+      createdAt: Date.now(),
+      status: "completed",
+      content: text,
+      partial_content: text,
+      error: null,
+      session,
+    };
+    subscribeToPartial(run);
+    runs.set(sessionID, run);
+    shortSessionIndex.set(sessionID, sessionFile);
+    return run;
   }
 
   async function createRun(args: any, ctx: any, projectPath: string, existingRun?: SubAgentRun): Promise<CreateRunResult> {
@@ -682,7 +829,7 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
       createAgentSession(sessionOptions),
     );
 
-    const id = `sub_${Date.now()}_${randomUUID().slice(0, 8)}`;
+    const id = shortSessionIdFromSessionFile(session.sessionManager.getSessionFile()) ?? makeLegacyRunID();
     const run: SubAgentRun = {
       id,
       agentName: forkMode ? "fork" : requestedAgent ?? "sub-agent",
@@ -698,6 +845,8 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
     };
     subscribeToPartial(run);
     runs.set(id, run);
+    const sessionFile = session.sessionManager.getSessionFile();
+    if (sessionFile) shortSessionIndex.set(id, sessionFile);
     return { ok: true, run };
   }
 
@@ -760,9 +909,9 @@ Prompt and context transfer:
 - reference_docs and fork are independent optimizations: fork transfers conversation history; reference_docs transfers explicit document content. They can be used together when both help.
 - Do not attach reference documents by default.
 
-Use existing_session_id only to continue the same live child session when its accumulated private context matters: continuing its investigation, asking it to refine its own prior result, following up, or correcting work it already performed.
+Use existing_session_id only to continue the same child session when its accumulated private context matters: continuing its investigation, asking it to refine its own prior result, following up, or correcting work it already performed.
 
-When existing_session_id is provided, the tool continues that session with its original project context, agent identity, fork/isolated mode, tools, settings, and system prompt. Do not provide project_path or agent with existing_session_id; those options are only for creating a new sub-agent session. If you need a different project, agent, or mode, create a new sub-agent instead of continuing an existing one.
+When existing_session_id is provided, the tool continues that child session with its original project context when possible. Do not provide project_path or agent with existing_session_id; those options are only for creating a new sub-agent session. If you need a different project, agent, or mode, create a new sub-agent instead of continuing an existing one.
 
 When continuing an existing session, relative reference_docs paths resolve against that existing session's project path.${diagnostics}`,
     promptSnippet: "Create or continue a recursive delegated sub-agent session for independent work",
@@ -777,7 +926,7 @@ When continuing an existing session, relative reference_docs paths resolve again
       prompt: Type.String({ description: "Task for the child session. For isolated sessions, include enough context to execute; for fork or existing_session_id, provide the incremental follow-up task." }),
       agent: Type.Optional(Type.String({ description: `Optional mode/name for creating a new sub-agent session. Omit for a new isolated generic sub-agent. Use a named agent only when its description matches the task. Use "fork" sparingly for an independent task that needs substantial inherited parent-session context; fork takes precedence over any agent named "fork". Do not provide agent with existing_session_id; an existing session keeps its original agent identity and fork/isolated mode. Available agents: ${[...startupCatalog.agents.keys()].sort().join(", ")}` })),
       run_in_background: Type.Optional(Type.Boolean({ description: "Whether to run the sub-agent asynchronously in the background. Default to false: if the parent agent needs this sub-agent's result before continuing, or has no other independent work to do in parallel, run synchronously and wait for completion. This avoids an immediate return followed by an unnecessary sub_agent_result wait call. Set true only when the parent agent will do other independent work while the sub-agent runs, or when launching multiple independent sub-agents in parallel. If the next step is simply to wait for this result, use false." })),
-      existing_session_id: Type.Optional(Type.String({ description: "Live sub-agent session ID returned by sub_agent. Use only to continue, refine, follow up, or correct work in that same child session. Mutually exclusive with project_path and agent: continuing a session preserves its original project context, agent identity, fork/isolated mode, tools, settings, and system prompt. To use a different project, agent, or mode, omit existing_session_id and create a new session." })),
+      existing_session_id: Type.Optional(Type.String({ description: "Existing delegated sub-agent session ID to continue. Use only to continue, refine, follow up, or correct work in that same child session. Mutually exclusive with project_path and agent: to use a different project, agent, or mode, create a new sub-agent instead." })),
       project_path: Type.Optional(Type.String({ description: "Project path for creating a new sub-agent session. Defaults to the caller's project path. Do not provide project_path with existing_session_id; an existing session keeps its original project context. When continuing an existing session, relative reference_docs paths resolve against that existing session's project path." })),
       reference_docs: Type.Optional(Type.Array(Type.String(), { description: "File paths to inline as context when paths are much shorter, faster, or more accurate than writing the same context in the prompt. Relative paths resolve against the new session's project_path, or against the existing session's original project path when existing_session_id is used. Useful for exact file snapshots, large specs/logs, or reusable background notes. Do not attach by default." })),
     }),
@@ -792,6 +941,12 @@ When continuing an existing session, relative reference_docs paths resolve again
 
         if (args.existing_session_id) {
           run = runs.get(args.existing_session_id);
+          if (!run && isShortSessionId(args.existing_session_id)) {
+            const sessionFile = await resolveShortSessionFile(args.existing_session_id, ctx.cwd);
+            if (sessionFile) {
+              run = await reopenRun(args.existing_session_id, sessionFile, ctx.cwd, ctx);
+            }
+          }
           if (!run) {
             return toolText(makeCreateRunFailurePayload({
               ok: false,
@@ -879,15 +1034,21 @@ When continuing an existing session, relative reference_docs paths resolve again
       session_ids: Type.Array(Type.String(), { description: "Delegated sub-agent session IDs" }),
       wait: StringEnum(["none", "any", "all"] as const, { description: "Return immediately, wait until any session finishes, or wait until all sessions finish" }),
     }),
-    async execute(_toolCallId, args) {
+    async execute(_toolCallId, args, _signal, _onUpdate, ctx) {
       while (true) {
-        const results = args.session_ids.map((sessionID: string) => {
-          const run = runs.get(sessionID);
+        const results = await Promise.all(args.session_ids.map(async (sessionID: string) => {
+          let run = runs.get(sessionID);
+          if (!run && isShortSessionId(sessionID)) {
+            const sessionFile = await resolveShortSessionFile(sessionID, ctx?.cwd ?? process.cwd());
+            if (sessionFile) {
+              run = await reopenRun(sessionID, sessionFile, ctx?.cwd ?? process.cwd(), ctx ?? {});
+            }
+          }
           if (!run) {
             return makeNotFoundResultPayload(sessionID);
           }
           return buildResultPayload(run);
-        });
+        }));
 
         if (shouldReturnResults(results, args.wait as WaitMode)) {
           return { ...toolText(results), details: { results } };
