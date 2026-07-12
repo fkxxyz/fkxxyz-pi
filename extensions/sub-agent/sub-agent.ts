@@ -14,15 +14,10 @@ import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 
 const GLOBAL_AGENTS_FILE = join(homedir(), "pi", "agents.ts");
 const PROJECT_AGENTS_FILE = join(".pi", "agents.ts");
-const SUBAGENT_SKILL_PATHS = [
-  "../../skills/subagent-delegation-verification",
-  "../../skills/subagent-prompt-simplification",
-  "../../skills/superpowers/subagent-driven-development",
-].map((path) => fileURLToPath(new URL(path, import.meta.url)));
 const POLL_INTERVAL_MS = 1000;
 const MAX_DEPTH = 8;
 const SUB_AGENT_ID_EPOCH_MS = Date.UTC(2000, 0, 1);
@@ -633,12 +628,6 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
     }
     return shortSessionIndex.get(sessionID);
   }
-
-  pi.on("resources_discover", async () => {
-    return {
-      skillPaths: SUBAGENT_SKILL_PATHS,
-    };
-  });
 
   pi.on("session_shutdown", async () => {
     for (const run of runs.values()) {

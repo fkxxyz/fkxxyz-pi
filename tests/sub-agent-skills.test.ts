@@ -409,7 +409,7 @@ export default {
 });
 
 describe("sub-agent skill discovery", () => {
-	test("discovers subagent skills", async () => {
+	test("does not expose legacy subagent skills", async () => {
 		const handlers: Array<() => Promise<{ skillPaths?: string[] }>> = [];
 		const { default: subAgentExtension } = await import("../extensions/sub-agent/sub-agent.ts");
 
@@ -422,16 +422,7 @@ describe("sub-agent skill discovery", () => {
 			getActiveTools: () => [],
 		} as never);
 
-		expect(handlers).toHaveLength(1);
-		const result = await handlers[0]!();
-		const skillPaths = result.skillPaths ?? [];
-
-		expect(skillPaths).toEqual([
-			resolve("skills/subagent-delegation-verification"),
-			resolve("skills/subagent-prompt-simplification"),
-			resolve("skills/superpowers/subagent-driven-development"),
-		]);
-		expect(skillPaths.every((path) => existsSync(path))).toBe(true);
+		expect(handlers).toHaveLength(0);
 	});
 });
 
