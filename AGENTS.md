@@ -32,6 +32,10 @@ The goal is to keep personal pi customizations portable, easy to combine per pro
 │       └── <extension-name>.ts
 ├── prompts/
 │   └── <prompt-name>.md
+├── tests/
+│   ├── <feature-name>.test.ts
+│   └── fixtures/
+│       └── <feature-or-package-name>/
 └── workspaces/
     └── <workspace-name>/
         ├── .pi/
@@ -178,6 +182,14 @@ Use this quick map for runtime configuration tasks:
 ```
 
 For model, provider, default-model, enabled-model, auth, or session requests, inspect the relevant `~/.pi/agent/` files before searching `~/pi`. For model/provider/default-model changes, `models.json` and `settings.json` are usually the canonical starting point. If a requested model should match an existing model's limits or behavior, clone the closest existing entry and preserve unspecified fields. Keep `defaultProvider`, `defaultModel`, and `enabledModels` consistent when changing defaults.
+
+### Tests And Fixtures
+
+Store automated tests under `~/pi/tests/`. Shared or file-based test inputs belong under `~/pi/tests/fixtures/`, grouped by the feature, package, or external layout they emulate. Fixtures are deterministic test source assets and should be committed so a clean checkout can reproduce the test suite without depending on locally installed packages or runtime state.
+
+Do not create competing fixture roots such as repository-level `fixtures/`, `test-fixtures/`, or extension-local fixture directories unless a test tool requires colocated files. Prefer `tests/fixtures/<feature-or-package-name>/` so future tests remain easy to discover and reuse.
+
+Keep generated runtime output separate from fixtures. Files produced during extension or test execution belong in a clearly named `generated/`, cache, or temporary directory near the owning component and should be ignored when reproducible. Commit generated content only when its exact bytes are an intentional golden test input; place that content under `tests/fixtures/` and name it as a golden fixture.
 
 ### Workspaces
 
