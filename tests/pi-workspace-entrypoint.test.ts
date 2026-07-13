@@ -8,4 +8,10 @@ describe("pi workspace entrypoint", () => {
 
 		expect(source).toContain('await load("../tool-output/tool-output-limiter.ts");');
 	});
+
+	test("loads auto session naming for this maintenance workspace", async () => {
+		const source = await readFile(resolve("extensions/entrypoints/pi-workspace.ts"), "utf8");
+
+		expect(source).toContain('await load("../session/auto-session-name.ts");');
+	});
 });

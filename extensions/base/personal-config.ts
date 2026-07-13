@@ -8,6 +8,10 @@ export type PersonalConfig = {
 	exaMcp?: {
 		url?: string;
 	};
+	autoSessionName?: {
+		provider?: string;
+		model?: string;
+	};
 	projectDirectories?: {
 		thirdPartyRepos?: string;
 		thirdPartyRepoExample?: string;

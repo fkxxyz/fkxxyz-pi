@@ -4,6 +4,7 @@
     "../interaction/interaction.ts",
     "../code/code.ts",
     "../tool-output/tool-output-limiter.ts",
+    "../session/auto-session-name.ts",
     "../skills/thinking-methodology.ts",
     "../pi-framework/pi-framework-knowledge.ts"
   ]
