@@ -1,6 +1,7 @@
 {
   "extensions": [
     "../system-prompt/simplify-system-prompt.ts",
+    "../system-prompt/load-agents-md.ts",
     "../interaction/interaction.ts",
     "../code/code.ts",
     "../tool-output/tool-output-limiter.ts",
