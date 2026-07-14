@@ -369,7 +369,10 @@ function shouldReturnResults(results: AgentResultPayload[], waitMode: WaitMode) 
   return waitMode === "any" ? hasAnyTerminal : allTerminal;
 }
 
-function formatAvailableAgentsForDescription(catalog: AgentCatalog) {
+function formatAvailableAgentsForDescription(catalog: AgentCatalog | undefined) {
+  if (!catalog) {
+    return "Resolved from the current session cwd at session start, and from project_path/current cwd again at execution time.";
+  }
   const names = [...catalog.agents.keys()].sort();
   if (names.length === 0) return "(none found)";
   return names.map((name) => {
@@ -378,7 +381,8 @@ function formatAvailableAgentsForDescription(catalog: AgentCatalog) {
   }).join("\n");
 }
 
-function formatAgentDiagnostics(catalog: AgentCatalog) {
+function formatAgentDiagnostics(catalog: AgentCatalog | undefined) {
+  if (!catalog) return "";
   if (catalog.diagnostics.length === 0) return "";
   return `\n\nAgent catalog diagnostics:\n${catalog.diagnostics.map((d) => `- ${d}`).join("\n")}`;
 }
@@ -630,7 +634,7 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
   initTheme(undefined, false);
 
   const currentDepth = depthContext.getStore() ?? 0;
-  const startupCatalog = await loadAgentCatalog(process.cwd());
+  let activeCatalog: AgentCatalog | undefined;
   const runs = new Map<string, SubAgentRun>();
   const shortSessionIndex = new Map<string, string>();
   const scannedSessionDirs = new Set<string>();
@@ -902,10 +906,12 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
     }
   }
 
-  const availableAgents = formatAvailableAgentsForDescription(startupCatalog);
-  const diagnostics = formatAgentDiagnostics(startupCatalog);
+  function registerSubAgentTool(catalog?: AgentCatalog) {
+    activeCatalog = catalog;
+    const availableAgents = formatAvailableAgentsForDescription(catalog);
+    const diagnostics = formatAgentDiagnostics(catalog);
 
-  pi.registerTool({
+    pi.registerTool({
     name: "sub_agent",
     label: "Sub Agent",
     description: `Use when a task can be delegated as an independently executable unit and the expected benefit outweighs the cost of creating, coordinating, and integrating a child session. Useful payoffs include parallelism, isolation, specialized agent behavior, independent review, context-window preservation, filtering noisy or large tool output into a compact result, or amortizing repeated context transfer.
@@ -948,7 +954,7 @@ When continuing an existing session, relative reference_docs paths resolve again
     ],
     parameters: Type.Object({
       prompt: Type.String({ description: "Task for the child session. For isolated sessions, include enough context to execute; for fork or existing_session_id, provide the incremental follow-up task." }),
-      agent: Type.Optional(Type.String({ description: `Optional mode/name for creating a new sub-agent session. Omit for a new isolated generic sub-agent. Use a named agent only when its description matches the task. Use "fork" sparingly for an independent task that needs substantial inherited parent-session context; fork takes precedence over any agent named "fork". Do not provide agent with existing_session_id; an existing session keeps its original agent identity and fork/isolated mode. Available agents: ${[...startupCatalog.agents.keys()].sort().join(", ")}` })),
+      agent: Type.Optional(Type.String({ description: `Optional mode/name for creating a new sub-agent session. Omit for a new isolated generic sub-agent. Use a named agent only when its description matches the task. Use "fork" sparingly for an independent task that needs substantial inherited parent-session context; fork takes precedence over any agent named "fork". Do not provide agent with existing_session_id; an existing session keeps its original agent identity and fork/isolated mode. Available agents: ${catalog ? ([...catalog.agents.keys()].sort().join(", ") || "(none found in this session cwd)") : "resolved from current session cwd at session start, and from project_path/current cwd again at execution time"}` })),
       run_in_background: Type.Optional(Type.Boolean({ description: "Whether to run the sub-agent asynchronously in the background. Default to false: if the parent agent needs this sub-agent's result before continuing, or has no other independent work to do in parallel, run synchronously and wait for completion. This avoids an immediate return followed by an unnecessary sub_agent_result wait call. Set true only when the parent agent will do other independent work while the sub-agent runs, or when launching multiple independent sub-agents in parallel. If the next step is simply to wait for this result, use false." })),
       existing_session_id: Type.Optional(Type.String({ description: "Existing delegated sub-agent session ID to continue. Use only to continue, refine, follow up, or correct work in that same child session. Mutually exclusive with project_path and agent: to use a different project, agent, or mode, create a new sub-agent instead." })),
       project_path: Type.Optional(Type.String({ description: "Project path for creating a new sub-agent session. Defaults to the caller's project path. Do not provide project_path with existing_session_id; an existing session keeps its original project context. When continuing an existing session, relative reference_docs paths resolve against that existing session's project path." })),
@@ -1044,10 +1050,17 @@ When continuing an existing session, relative reference_docs paths resolve again
         return toolText(makeUnknownErrorPayload({
           run,
           error,
-          availableAgents: [...startupCatalog.agents.keys()].sort(),
+          availableAgents: [...(activeCatalog?.agents.keys() ?? [])].sort(),
         }));
       }
     },
+  });
+  }
+
+  registerSubAgentTool();
+
+  pi.on("session_start", async (_event, ctx) => {
+    registerSubAgentTool(await loadAgentCatalog(ctx.cwd));
   });
 
   pi.registerTool({
@@ -1063,9 +1076,9 @@ When continuing an existing session, relative reference_docs paths resolve again
         const results = await Promise.all(args.session_ids.map(async (sessionID: string) => {
           let run = runs.get(sessionID);
           if (!run && isShortSessionId(sessionID)) {
-            const sessionFile = await resolveShortSessionFile(sessionID, ctx?.cwd ?? process.cwd());
+            const sessionFile = await resolveShortSessionFile(sessionID, ctx.cwd);
             if (sessionFile) {
-              run = await reopenRun(sessionID, sessionFile, ctx?.cwd ?? process.cwd(), ctx ?? {});
+              run = await reopenRun(sessionID, sessionFile, ctx.cwd, ctx);
             }
           }
           if (!run) {

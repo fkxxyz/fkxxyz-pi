@@ -94,6 +94,20 @@ export default async function root(pi: ExtensionAPI) {
 
 The loader identifies extensions by resolved module URL, so the same extension can be included from multiple roots without executing twice. It also reports circular inclusion. Keep dependency relationships explicit in code with `load(...)`; do not add hand-written ids, `defineExtension`, or `dependencies` manifests unless a future change justifies the extra protocol. Do not place concrete feature extensions or entrypoint extensions in `~/pi/extensions/base/`; that directory is reserved for composition infrastructure.
 
+#### Session CWD Boundary
+
+Extension code must treat the session cwd supplied by pi as the authority for workspace-local resources. Do not use `process.cwd()` to discover `.pi/settings.json`, `.pi/agents.ts`, `AGENTS.md`, workspace files, extension dependency markers, session directories, or any other cwd-scoped resource. This matters for pi-web and other long-running hosts: the process cwd can be the server/package directory while the active session cwd is a user-selected workspace.
+
+Use the cwd from the relevant runtime surface instead:
+
+- tool execution: `ctx.cwd`
+- lifecycle events such as `session_start`: the event context `ctx.cwd`
+- system-prompt events: `event.systemPromptOptions.cwd`
+- resource discovery: `event.cwd`
+- nested or resumed sessions: the session manager's recorded cwd when available
+
+`process.cwd()` is acceptable only for process-level behavior that is intentionally independent of the active pi workspace, or as a last-resort fallback when a pi API genuinely does not provide a session cwd and the behavior remains correct in pi-web. If a registered tool description, prompt, or catalog depends on workspace-local files, build or refresh it from the session cwd rather than from extension module load time. Add a regression test where `process.cwd()` differs from the session cwd when fixing this class of bug.
+
 ### Sub-agents
 
 Named sub-agents are registered through TypeScript index files, not by automatically scanning Markdown files:

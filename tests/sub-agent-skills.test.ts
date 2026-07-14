@@ -11,6 +11,7 @@ let lastResourceLoaderOptions: any;
 let lastCreateAgentSessionOptions: any;
 let nextChildSessionFile: string | undefined;
 let openedSessionFiles: string[] = [];
+let sessionStartHandlers: any[] = [];
 
 function makeChildSessionManager(kind: string, sessionFile?: string) {
 	return {
@@ -91,11 +92,14 @@ mock.module("typebox", () => ({
 
 async function loadSubAgentExtension() {
 	toolDefinitions = [];
+	sessionStartHandlers = [];
 	openedSessionFiles = [];
 	nextChildSessionFile = undefined;
 	const { default: subAgentExtension } = await import("../extensions/sub-agent/sub-agent.ts");
 	await subAgentExtension({
-		on() {},
+		on(eventName: string, handler: any) {
+			if (eventName === "session_start") sessionStartHandlers.push(handler);
+		},
 		registerTool(definition: any) {
 			toolDefinitions.push(definition);
 		},
@@ -105,36 +109,34 @@ async function loadSubAgentExtension() {
 	return toolDefinitions.find((tool) => tool.name === "sub_agent");
 }
 
+function latestSubAgentTool() {
+	return [...toolDefinitions].reverse().find((tool) => tool.name === "sub_agent");
+}
+
 describe("sub_agent agents.ts project catalog", () => {
-	test("shallow-merges project agent fields over global agents", async () => {
-		lastResourceLoaderOptions = undefined;
-		const projectDir = join(tmpdir(), `pi-sub-agent-merge-${Date.now()}`);
+	test("refreshes available agent descriptions from session cwd instead of process cwd", async () => {
+		const projectDir = join(tmpdir(), `pi-sub-agent-session-cwd-${Date.now()}`);
 		await mkdir(join(projectDir, ".pi"), { recursive: true });
 		await writeFile(join(projectDir, ".pi", "agents.ts"), `
 export default {
-  researcher: {
-    description: "Project researcher override"
+  helper: {
+    description: "Session cwd helper",
+    systemPrompt: "helper prompt"
   }
 };
 `);
 
 		const originalCwd = process.cwd();
 		try {
-			process.chdir(projectDir);
-			const tool = await loadSubAgentExtension();
-			process.chdir(originalCwd);
-			expect(tool.description).toContain("researcher: Project researcher override");
-			const result = await tool.execute(
-				"call-merge-agent",
-				{ prompt: "do work", agent: "researcher", project_path: projectDir, run_in_background: false },
-				undefined,
-				undefined,
-				{ cwd: process.cwd(), sessionManager: { getSessionFile: () => undefined } },
-			);
+			process.chdir("/tmp");
+			await loadSubAgentExtension();
+			expect(latestSubAgentTool().description).not.toContain("helper: Session cwd helper");
+			expect(sessionStartHandlers).toHaveLength(1);
 
-			expect(JSON.parse(result.content[0].text)).toEqual({ session_id: expect.any(String), response: "done" });
-			const appended = lastResourceLoaderOptions.appendSystemPromptOverride([]).join("\n");
-			expect(appended).toContain("You are **researcher**");
+			await sessionStartHandlers[0]({ type: "session_start", reason: "new" }, { cwd: projectDir });
+
+			expect(latestSubAgentTool().description).toContain("helper: Session cwd helper");
+			expect(latestSubAgentTool().parameters.agent.description).toContain("Available agents: helper");
 		} finally {
 			process.chdir(originalCwd);
 			await rm(projectDir, { recursive: true, force: true });
@@ -196,7 +198,9 @@ export default {
 		const originalCwd = process.cwd();
 		try {
 			process.chdir(projectDir);
-			const tool = await loadSubAgentExtension();
+			await loadSubAgentExtension();
+			await sessionStartHandlers[0]({ type: "session_start", reason: "new" }, { cwd: projectDir });
+			const tool = latestSubAgentTool();
 			process.chdir(originalCwd);
 			expect(tool.description).toContain("helper: Nested helper");
 			expect(tool.description).not.toContain("main: Main coordinator");
@@ -316,7 +320,9 @@ export default {
 		const originalCwd = process.cwd();
 		try {
 			process.chdir(projectDir);
-			const tool = await loadSubAgentExtension();
+			await loadSubAgentExtension();
+			await sessionStartHandlers[0]({ type: "session_start", reason: "new" }, { cwd: projectDir });
+			const tool = latestSubAgentTool();
 			expect(tool.description).toContain("helper: Project helper agent");
 
 			const result = await tool.execute(

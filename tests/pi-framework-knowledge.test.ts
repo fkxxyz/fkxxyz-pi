@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 
 describe("pi framework knowledge extension", () => {
 	test("generates and discovers a skill containing Pi's default system prompt", async () => {
-		const handlers: Record<string, () => Promise<{ skillPaths?: string[] }>> = {};
+		const handlers: Record<string, (event: { cwd: string }) => Promise<{ skillPaths?: string[] }>> = {};
 		const previousPackageDirectory = process.env.PI_FRAMEWORK_KNOWLEDGE_PACKAGE_DIR;
 		process.env.PI_FRAMEWORK_KNOWLEDGE_PACKAGE_DIR = resolve(
 			"tests/fixtures/pi-coding-agent",
@@ -16,7 +16,7 @@ describe("pi framework knowledge extension", () => {
 
 		try {
 			await loadPiFrameworkKnowledge({
-				on(event: string, handler: () => Promise<{ skillPaths?: string[] }>) {
+				on(event: string, handler: (event: { cwd: string }) => Promise<{ skillPaths?: string[] }>) {
 					handlers[event] = handler;
 				},
 			} as never);
@@ -28,7 +28,7 @@ describe("pi framework knowledge extension", () => {
 			}
 		}
 
-		const result = await handlers.resources_discover();
+		const result = await handlers.resources_discover({ cwd: resolve("tests/fixtures/example-project") });
 		const skillDirectory = resolve(
 			"extensions/pi-framework/generated/pi-framework-knowledge",
 		);

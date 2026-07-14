@@ -97,11 +97,13 @@ async function writeGeneratedSkill(content: string): Promise<void> {
 
 export default async function loadPiFrameworkKnowledge(pi: ExtensionAPI) {
 	const { buildSystemPrompt } = await importPrivateSystemPromptModule();
-	const defaultSystemPrompt = buildSystemPrompt({ cwd: process.cwd() });
 
-	await writeGeneratedSkill(`${SKILL_FRONTMATTER}${defaultSystemPrompt}\n`);
+	pi.on("resources_discover", async (event) => {
+		const defaultSystemPrompt = buildSystemPrompt({ cwd: event.cwd });
+		await writeGeneratedSkill(`${SKILL_FRONTMATTER}${defaultSystemPrompt}\n`);
 
-	pi.on("resources_discover", async () => ({
-		skillPaths: [GENERATED_SKILL_DIRECTORY],
-	}));
+		return {
+			skillPaths: [GENERATED_SKILL_DIRECTORY],
+		};
+	});
 }
