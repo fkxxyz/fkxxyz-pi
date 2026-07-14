@@ -13,12 +13,13 @@ async function withTempWorkspace<T>(fn: (root: string) => Promise<T>): Promise<T
 }
 
 describe("load AGENTS.md system prompt extension", () => {
-	test("appends AGENTS.md files from workspace root to cwd", async () => {
+	test("appends only AGENTS.md from the current cwd", async () => {
 		await withTempWorkspace(async (root) => {
 			const nested = join(root, "packages", "app");
 			await mkdir(nested, { recursive: true });
 			await writeFile(join(root, "AGENTS.md"), "# Root Rules\n\nUse root guidance.");
 			await writeFile(join(root, "packages", "AGENTS.md"), "# Package Rules\n\nUse package guidance.");
+			await writeFile(join(nested, "AGENTS.md"), "# App Rules\n\nUse app guidance.");
 
 			const handlers: any[] = [];
 			const { default: loadAgentsMd } = await import("../extensions/system-prompt/load-agents-md.ts");
@@ -36,13 +37,35 @@ describe("load AGENTS.md system prompt extension", () => {
 			});
 
 			expect(result.systemPrompt).toContain("Base prompt");
-			expect(result.systemPrompt).toContain(`<project_instructions path="${join(root, "AGENTS.md")}">`);
-			expect(result.systemPrompt).toContain("Use root guidance.");
-			expect(result.systemPrompt).toContain(`<project_instructions path="${join(root, "packages", "AGENTS.md")}">`);
-			expect(result.systemPrompt).toContain("Use package guidance.");
-			expect(result.systemPrompt.indexOf("Use root guidance.")).toBeLessThan(
-				result.systemPrompt.indexOf("Use package guidance."),
-			);
+			expect(result.systemPrompt).toContain(`<project_instructions path="${join(nested, "AGENTS.md")}">`);
+			expect(result.systemPrompt).toContain("Use app guidance.");
+			expect(result.systemPrompt).not.toContain("Use root guidance.");
+			expect(result.systemPrompt).not.toContain("Use package guidance.");
+		});
+	});
+
+	test("does not append project context when cwd has no AGENTS.md", async () => {
+		await withTempWorkspace(async (root) => {
+			const nested = join(root, "packages", "app");
+			await mkdir(nested, { recursive: true });
+			await writeFile(join(root, "AGENTS.md"), "# Root Rules\n\nUse root guidance.");
+
+			const handlers: any[] = [];
+			const { default: loadAgentsMd } = await import("../extensions/system-prompt/load-agents-md.ts");
+
+			loadAgentsMd({
+				on(eventName: string, handler: any) {
+					if (eventName === "before_agent_start") handlers.push(handler);
+				},
+			} as never);
+
+			expect(handlers).toHaveLength(1);
+			const result = await handlers[0]({
+				systemPrompt: "Base prompt",
+				systemPromptOptions: { cwd: nested },
+			});
+
+			expect(result).toBeUndefined();
 		});
 	});
 
