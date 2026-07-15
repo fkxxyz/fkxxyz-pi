@@ -35,7 +35,8 @@ Example patch:
 It is important to remember:
 
 - You must include a header with your intended action (Add/Delete/Update)
-- You must prefix new lines with \`+\` even when creating a new file`;
+- You must prefix new lines with \`+\` even when creating a file
+- Patch paths may be relative to the current workspace or absolute. Relative paths are resolved against the current workspace and may include \`..\`.`;
 
 const Parameters = Type.Object({
 	patchText: Type.String({ description: "The full patch text that describes all changes to be made" }),
@@ -456,12 +457,8 @@ function createTwoFilesPatch(filePath: string, oldContent: string, newContent: s
 	return [`--- ${filePath}`, `+++ ${filePath}`, `@@ -1 +1 @@`, ...body].join("\n");
 }
 
-function resolveWorkspacePath(cwd: string, patchPath: string): string {
-	if (path.isAbsolute(patchPath)) throw new Error(`absolute paths are not allowed: ${patchPath}`);
-	const resolved = path.resolve(cwd, patchPath);
-	const relative = path.relative(cwd, resolved);
-	if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) return resolved;
-	throw new Error(`path escapes workspace: ${patchPath}`);
+function resolvePatchPath(cwd: string, patchPath: string): string {
+	return path.resolve(cwd, patchPath);
 }
 
 function toRelative(cwd: string, filePath: string): string {
@@ -494,7 +491,7 @@ async function planChanges(hunks: Hunk[], cwd: string): Promise<{ fileChanges: F
 	}
 
 	for (const hunk of hunks) {
-		const filePath = resolveWorkspacePath(cwd, hunk.path);
+		const filePath = resolvePatchPath(cwd, hunk.path);
 
 		switch (hunk.type) {
 			case "add": {
@@ -526,7 +523,7 @@ async function planChanges(hunks: Hunk[], cwd: string): Promise<{ fileChanges: F
 					throw new Error(`apply_patch verification failed: ${error}`);
 				}
 
-				const movePath = hunk.move_path ? resolveWorkspacePath(cwd, hunk.move_path) : undefined;
+				const movePath = hunk.move_path ? resolvePatchPath(cwd, hunk.move_path) : undefined;
 				if (movePath) {
 					const targetState = await getState(movePath);
 					if (targetState.exists && movePath !== filePath) {
@@ -614,7 +611,7 @@ export default function applyPatchExtension(pi: ExtensionAPI) {
 			"apply_patch patches must include *** Begin Patch and *** End Patch markers.",
 			"apply_patch operations must use *** Add File:, *** Delete File:, or *** Update File: headers.",
 			"apply_patch new file content lines must be prefixed with +.",
-			"apply_patch paths must be relative workspace paths.",
+			"apply_patch paths may be relative to the current workspace or absolute. Relative paths are resolved against the current workspace and may include '..'.",
 		],
 		parameters: Parameters,
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {

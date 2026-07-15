@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 
 type RegisteredTool = {
@@ -38,6 +38,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+	await rm(join(cwd, "..", `${basename(cwd)}-escape.txt`), { force: true });
 	await rm(cwd, { recursive: true, force: true });
 });
 
@@ -223,18 +224,24 @@ function c() {
 *** End Patch`, "Failed to read file to update");
 	});
 
-	test("rejects absolute paths", async () => {
-		await expectRejectsWith(`*** Begin Patch
+	test("supports absolute paths", async () => {
+		await apply(`*** Begin Patch
 *** Add File: ${join(cwd, "abs.txt")}
 +abs
-*** End Patch`, "absolute paths are not allowed");
+*** End Patch`);
+
+		expect(await text("abs.txt")).toBe("abs\n");
 	});
 
-	test("rejects paths escaping the workspace", async () => {
-		await expectRejectsWith(`*** Begin Patch
-*** Add File: ../escape.txt
+	test("supports paths escaping the workspace", async () => {
+		const escapedPath = `../${basename(cwd)}-escape.txt`;
+
+		await apply(`*** Begin Patch
+*** Add File: ${escapedPath}
 +escape
-*** End Patch`, "path escapes workspace");
+*** End Patch`);
+
+		expect(await readFile(join(cwd, escapedPath), "utf8")).toBe("escape\n");
 	});
 
 	test("rejects empty patches", async () => {
