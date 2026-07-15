@@ -4,6 +4,12 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 describe("experience capture skill discovery extension", () => {
+	test("agent development prompt skills are part of the default preset", async () => {
+		const preset = JSON.parse(await readFile(resolve("extensions/entrypoints/default-preset.json"), "utf8"));
+
+		expect(preset.extensions).toContain("../agent-development/prompt-skills.ts");
+	});
+
 	test("discovers experience capture skill", async () => {
 		const handlers: Array<() => Promise<{ skillPaths?: string[] }>> = [];
 		const { default: experienceCapture } = await import(

@@ -79,6 +79,7 @@ describe("load AGENTS.md system prompt extension", () => {
 			"../code/code.ts",
 			"../tool-output/tool-output-limiter.ts",
 			"../session/auto-session-name.ts",
+			"../agent-development/prompt-skills.ts",
 			"../skills/thinking-methodology.ts",
 			"../pi-framework/pi-framework-knowledge.ts",
 		]);
