@@ -26,7 +26,6 @@ export default function conditionalPresetLoader(pi: ExtensionAPI) {
 		const markerPath = findDisablePresetMarker(ctx.cwd);
 
 		if (markerPath) {
-			ctx.ui.notify(`Default preset skipped because ${markerPath} exists.`, "info");
 			return;
 		}
 
