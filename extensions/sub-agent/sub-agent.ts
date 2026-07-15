@@ -25,6 +25,17 @@ const SUB_AGENT_ID_EPOCH_MS = Date.UTC(2000, 0, 1);
 const SHORT_SESSION_ID_PATTERN = /^[0-9a-z]{1,9}_[0-9a-f]{8}$/;
 const SESSION_FILE_TIMESTAMP_PATTERN = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z_/;
 const SESSION_FILE_HASH_PATTERN = /([0-9a-f]{8})(?:\.jsonl)$/i;
+const FORKED_SUBAGENT_CONTEXT = `<forked_subagent_context>
+You are a forked sub-agent.
+
+All conversation history and tool results that existed before this fork request are inherited context. Treat them as background reference only, even if they appear to be your own prior messages, plans, approvals, or unfinished work.
+
+Your active task is exactly the fork request prompt that follows this context block, not any broader task, momentum, or intent found in the inherited context.
+
+Do not inherit task ownership, execution authority, prior approvals, or obligation to continue work from the inherited context. Tool use, edits, side effects, or completing the broader task require explicit authorization in the fork request prompt itself.
+
+If inherited context conflicts with the fork request prompt, the fork request prompt wins. If scope is unclear, stop and report the ambiguity instead of acting beyond the fork request.
+</forked_subagent_context>`;
 
 type AgentResultStatus = "running" | "completed" | "error" | "not_found" | "stopped";
 type WaitMode = "none" | "any" | "all";
@@ -68,6 +79,8 @@ type SubAgentRun = {
   partial_content: string | null;
   error: string | null;
   session: AgentSession;
+  mode: "fork" | "isolated";
+  forkContextSent?: boolean;
   unsubscribe?: () => void;
   promise?: Promise<void>;
 };
@@ -538,10 +551,52 @@ async function resolveAgentSystemPrompt(agent: AgentDefinition): Promise<string 
 }
 
 
+const FORK_SNAPSHOT_PRUNE_ERROR = "fork snapshot pruning failed because parent branch did not end with the current sub_agent fork tool call";
+
+function pruneCurrentForkToolCall(branchEntries: any[], forkPrompt: string) {
+  const lastEntry = branchEntries[branchEntries.length - 1];
+  const content = lastEntry?.message?.content;
+
+  if (lastEntry?.type !== "message" || lastEntry.message?.role !== "assistant" || !Array.isArray(content) || content.length === 0) {
+    throw new Error(FORK_SNAPSHOT_PRUNE_ERROR);
+  }
+
+  const lastBlock = content[content.length - 1];
+  const toolArguments = lastBlock?.arguments;
+  if (
+    lastBlock?.type !== "toolCall" ||
+    lastBlock.name !== "sub_agent" ||
+    !toolArguments ||
+    typeof toolArguments !== "object" ||
+    Array.isArray(toolArguments) ||
+    toolArguments.agent !== "fork" ||
+    toolArguments.prompt !== forkPrompt
+  ) {
+    throw new Error(FORK_SNAPSHOT_PRUNE_ERROR);
+  }
+
+  const prunedContent = content.slice(0, -1);
+  if (prunedContent.length === 0) {
+    return branchEntries.slice(0, -1);
+  }
+
+  return [
+    ...branchEntries.slice(0, -1),
+    {
+      ...lastEntry,
+      message: {
+        ...lastEntry.message,
+        content: prunedContent,
+      },
+    },
+  ];
+}
+
 async function createForkBranchSessionFile(input: {
   sessionManager: any;
   parentSession: string;
   parentCwd: string;
+  forkPrompt: string;
 }) {
   const leafId = typeof input.sessionManager?.getLeafId === "function" ? input.sessionManager.getLeafId() : undefined;
   const branchEntries = leafId && typeof input.sessionManager?.getBranch === "function"
@@ -552,6 +607,8 @@ async function createForkBranchSessionFile(input: {
   if (!leafId || !Array.isArray(branchEntries) || branchEntries.length === 0 || !sessionDir) {
     return undefined;
   }
+
+  const prunedBranchEntries = pruneCurrentForkToolCall(branchEntries, input.forkPrompt);
 
   await mkdir(sessionDir, { recursive: true });
 
@@ -568,7 +625,7 @@ async function createForkBranchSessionFile(input: {
     parentSession: input.parentSession,
   };
 
-  const lines = [header, ...branchEntries].map((entry) => JSON.stringify(entry)).join("\n") + "\n";
+  const lines = [header, ...prunedBranchEntries].map((entry) => JSON.stringify(entry)).join("\n") + "\n";
   await writeFile(branchFile, lines, { flag: "wx" });
   return branchFile;
 }
@@ -755,6 +812,7 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
       partial_content: text,
       error: null,
       session,
+      mode: "isolated",
     };
     subscribeToPartial(run);
     runs.set(sessionID, run);
@@ -810,7 +868,7 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
 
     if (forkMode) {
       const branchFile = parentSession
-        ? await createForkBranchSessionFile({ sessionManager: ctx.sessionManager, parentSession, parentCwd: ctx.cwd })
+        ? await createForkBranchSessionFile({ sessionManager: ctx.sessionManager, parentSession, parentCwd: ctx.cwd, forkPrompt: args.prompt })
         : undefined;
 
       if (!branchFile) {
@@ -870,6 +928,8 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
       partial_content: null,
       error: null,
       session,
+      mode: forkMode ? "fork" : "isolated",
+      forkContextSent: false,
     };
     subscribeToPartial(run);
     runs.set(id, run);
@@ -878,14 +938,26 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
     return { ok: true, run };
   }
 
+  function buildPromptForRun(run: SubAgentRun, prompt: string, referenceBlock: string | undefined) {
+    const includeForkContext = run.mode === "fork" && !run.forkContextSent;
+    if (includeForkContext) run.forkContextSent = true;
+
+    if (referenceBlock) {
+      const delegatedPrompt = includeForkContext
+        ? `${FORKED_SUBAGENT_CONTEXT}\n\n<delegated_task>\n${prompt}\n</delegated_task>`
+        : `<delegated_task>\n${prompt}\n</delegated_task>`;
+      return `${referenceBlock}\n\n${delegatedPrompt}`;
+    }
+
+    return includeForkContext ? `${FORKED_SUBAGENT_CONTEXT}\n\n${prompt}` : prompt;
+  }
+
   async function runPrompt(run: SubAgentRun, prompt: string, referenceBlock: string | undefined) {
     run.status = "running";
     run.error = null;
     run.completedAt = undefined;
 
-    const fullPrompt = referenceBlock
-      ? `${referenceBlock}\n\n<delegated_task>\n${prompt}\n</delegated_task>`
-      : prompt;
+    const fullPrompt = buildPromptForRun(run, prompt, referenceBlock);
 
     try {
       await depthContext.run(run.depth, async () => {

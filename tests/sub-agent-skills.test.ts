@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -12,6 +12,7 @@ let lastCreateAgentSessionOptions: any;
 let nextChildSessionFile: string | undefined;
 let openedSessionFiles: string[] = [];
 let sessionStartHandlers: any[] = [];
+let promptedTexts: string[] = [];
 
 function makeChildSessionManager(kind: string, sessionFile?: string) {
 	return {
@@ -42,7 +43,9 @@ mock.module("@earendil-works/pi-coding-agent", () => ({
 				subscribe() {
 					return () => undefined;
 				},
-				async prompt() {},
+				async prompt(text: string) {
+					promptedTexts.push(text);
+				},
 				async abort() {},
 				dispose() {},
 			},
@@ -94,6 +97,7 @@ async function loadSubAgentExtension() {
 	toolDefinitions = [];
 	sessionStartHandlers = [];
 	openedSessionFiles = [];
+	promptedTexts = [];
 	nextChildSessionFile = undefined;
 	const { default: subAgentExtension } = await import("../extensions/sub-agent/sub-agent.ts");
 	await subAgentExtension({
@@ -168,6 +172,7 @@ export default {
 			);
 
 			expect(JSON.parse(result.content[0].text)).toEqual({ session_id: expect.any(String), response: "done" });
+			expect(promptedTexts).toEqual(["do work"]);
 			const appended = lastResourceLoaderOptions.appendSystemPromptOverride([]).join("\n");
 			expect(appended).toContain("file prompt");
 		} finally {
@@ -511,34 +516,211 @@ describe("sub-agent skill discovery", () => {
 });
 
 describe("sub_agent fork mode", () => {
+	function makeParentBranch(forkPrompt: string, toolAgent = "fork") {
+		return [
+			{ type: "message", id: "user-1", parentId: null, timestamp: "2026-01-01T00:00:00.000Z", message: { role: "user", content: "hello", timestamp: 1 } },
+			{
+				type: "message",
+				id: "assistant-1",
+				parentId: "user-1",
+				timestamp: "2026-01-01T00:00:01.000Z",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "text", text: "I will fork." },
+						{ type: "toolCall", id: "call-1", name: "sub_agent", arguments: { prompt: forkPrompt, agent: toolAgent, run_in_background: false } },
+					],
+					timestamp: 2,
+				},
+			},
+		];
+	}
+
 	test('treats agent="fork" as fork mode before named-agent lookup', async () => {
 		sessionManagerCalls.length = 0;
+		const forkDir = join(tmpdir(), `pi-sub-agent-fork-${Date.now()}`);
+		await mkdir(forkDir, { recursive: true });
 		const tool = await loadSubAgentExtension();
 		const parentSessionManager = {
-			getSessionFile: () => "/tmp/parent.jsonl",
-			getSessionDir: () => "/tmp",
-			getLeafId: () => "leaf-1",
+			getSessionFile: () => join(forkDir, "parent.jsonl"),
+			getSessionDir: () => forkDir,
+			getLeafId: () => "assistant-1",
 			getBranch: (leafId: string) => {
 				sessionManagerCalls.push(`getBranch:${leafId}`);
-				return [{ type: "message", id: "leaf-1", parentId: null, timestamp: "2026-01-01T00:00:00.000Z", message: { role: "user", content: "hello", timestamp: 1 } }];
+				return makeParentBranch("do work");
 			},
 			createBranchedSession: () => {
 				throw new Error("createBranchedSession mutates the parent session and must not be used");
 			},
 		};
 
+		try {
+			const result = await tool.execute(
+				"call-1",
+				{ prompt: "do work", agent: "fork", run_in_background: false },
+				undefined,
+				undefined,
+				{ cwd: process.cwd(), sessionManager: parentSessionManager },
+			);
+
+			expect(JSON.parse(result.content[0].text)).toEqual({ session_id: expect.any(String), response: "done" });
+			expect(sessionManagerCalls).toContain("getBranch:assistant-1");
+			expect(sessionManagerCalls.some((call) => call.startsWith(`open:${forkDir}/`))).toBe(true);
+			expect(lastSessionManager.kind).toBe("open");
+			expect(sessionManagerCalls.some((call) => call.startsWith("create:appendSessionInfo"))).toBe(false);
+		} finally {
+			await rm(forkDir, { recursive: true, force: true });
+		}
+	});
+
+	test("prunes the current sub_agent fork tool call from fork branch snapshots", async () => {
+		sessionManagerCalls.length = 0;
+		const forkDir = join(tmpdir(), `pi-sub-agent-fork-prune-${Date.now()}`);
+		await mkdir(forkDir, { recursive: true });
+		const tool = await loadSubAgentExtension();
+		const parentSessionManager = {
+			getSessionFile: () => join(forkDir, "parent.jsonl"),
+			getSessionDir: () => forkDir,
+			getLeafId: () => "assistant-1",
+			getBranch: () => makeParentBranch("do work"),
+		};
+
+		try {
+			const result = await tool.execute(
+				"call-prune-fork",
+				{ prompt: "do work", agent: "fork", run_in_background: false },
+				undefined,
+				undefined,
+				{ cwd: process.cwd(), sessionManager: parentSessionManager },
+			);
+
+			expect(JSON.parse(result.content[0].text)).toEqual({ session_id: expect.any(String), response: "done" });
+			expect(openedSessionFiles).toHaveLength(1);
+			const branchContents = await readFile(openedSessionFiles[0], "utf8");
+			expect(branchContents).not.toContain('"name":"sub_agent"');
+			expect(branchContents).not.toContain('"type":"toolCall"');
+			expect(branchContents).toContain('"text":"I will fork."');
+		} finally {
+			await rm(forkDir, { recursive: true, force: true });
+		}
+	});
+
+	test("fails fork mode when parent branch does not end with the current fork tool call", async () => {
+		sessionManagerCalls.length = 0;
+		lastCreateAgentSessionOptions = undefined;
+		const forkDir = join(tmpdir(), `pi-sub-agent-fork-prune-fail-${Date.now()}`);
+		await mkdir(forkDir, { recursive: true });
+		const tool = await loadSubAgentExtension();
+		const parentSessionManager = {
+			getSessionFile: () => join(forkDir, "parent.jsonl"),
+			getSessionDir: () => forkDir,
+			getLeafId: () => "assistant-1",
+			getBranch: () => makeParentBranch("do work", "helper"),
+		};
+
+		try {
+			const result = await tool.execute(
+				"call-prune-fork-fail",
+				{ prompt: "do work", agent: "fork", run_in_background: false },
+				undefined,
+				undefined,
+				{ cwd: process.cwd(), sessionManager: parentSessionManager },
+			);
+
+			const payload = JSON.parse(result.content[0].text);
+			expect(payload.message ?? payload.error).toContain("fork snapshot pruning failed because parent branch did not end with the current sub_agent fork tool call");
+			expect(openedSessionFiles).toHaveLength(0);
+			expect(lastCreateAgentSessionOptions).toBeUndefined();
+		} finally {
+			await rm(forkDir, { recursive: true, force: true });
+		}
+	});
+
+	test("adds forked_subagent_context to the first fork prompt after reference documents", async () => {
+		const forkDir = join(tmpdir(), `pi-sub-agent-fork-context-${Date.now()}`);
+		const refDoc = join(forkDir, "ref.md");
+		await mkdir(forkDir, { recursive: true });
+		await writeFile(refDoc, "reference body");
+		const tool = await loadSubAgentExtension();
+		const parentSessionManager = {
+			getSessionFile: () => join(forkDir, "parent.jsonl"),
+			getSessionDir: () => forkDir,
+			getLeafId: () => "assistant-1",
+			getBranch: () => makeParentBranch("do fork work"),
+		};
+
+		try {
+			const result = await tool.execute(
+				"call-fork-context",
+				{ prompt: "do fork work", agent: "fork", reference_docs: [refDoc], run_in_background: false },
+				undefined,
+				undefined,
+				{ cwd: process.cwd(), sessionManager: parentSessionManager },
+			);
+
+			expect(JSON.parse(result.content[0].text)).toEqual({ session_id: expect.any(String), response: "done" });
+			expect(promptedTexts).toHaveLength(1);
+			expect(promptedTexts[0]).toStartWith("<reference_documents>");
+			expect(promptedTexts[0]).toContain("</reference_documents>\n\n<forked_subagent_context>");
+			expect(promptedTexts[0]).toContain("You are a forked sub-agent.");
+			expect(promptedTexts[0]).toContain("All conversation history and tool results that existed before this fork request are inherited context.");
+			expect(promptedTexts[0]).not.toContain("visible sub_agent tool call");
+			expect(promptedTexts[0]).toContain("</forked_subagent_context>\n\n<delegated_task>\ndo fork work\n</delegated_task>");
+		} finally {
+			await rm(forkDir, { recursive: true, force: true });
+		}
+	});
+
+	test("does not add forked_subagent_context to ordinary isolated sub-agent prompts", async () => {
+		const tool = await loadSubAgentExtension();
+
 		const result = await tool.execute(
-			"call-1",
-			{ prompt: "do work", agent: "fork", run_in_background: false },
+			"call-isolated-no-fork-context",
+			{ prompt: "do isolated work", run_in_background: false },
 			undefined,
 			undefined,
-			{ cwd: process.cwd(), sessionManager: parentSessionManager },
+			{ cwd: process.cwd(), sessionManager: { getSessionFile: () => undefined } },
 		);
 
 		expect(JSON.parse(result.content[0].text)).toEqual({ session_id: expect.any(String), response: "done" });
-		expect(sessionManagerCalls).toContain("getBranch:leaf-1");
-		expect(sessionManagerCalls.some((call) => call.startsWith("open:/tmp/"))).toBe(true);
-		expect(lastSessionManager.kind).toBe("open");
-		expect(sessionManagerCalls.some((call) => call.startsWith("create:appendSessionInfo"))).toBe(false);
+		expect(promptedTexts).toEqual(["do isolated work"]);
+	});
+
+	test("does not repeat forked_subagent_context when continuing an existing fork run", async () => {
+		const forkDir = join(tmpdir(), `pi-sub-agent-fork-context-continue-${Date.now()}`);
+		await mkdir(forkDir, { recursive: true });
+		const tool = await loadSubAgentExtension();
+		const parentSessionManager = {
+			getSessionFile: () => join(forkDir, "parent.jsonl"),
+			getSessionDir: () => forkDir,
+			getLeafId: () => "assistant-1",
+			getBranch: () => makeParentBranch("start fork"),
+		};
+
+		try {
+			const created = await tool.execute(
+				"call-fork-context-continue-start",
+				{ prompt: "start fork", agent: "fork", run_in_background: false },
+				undefined,
+				undefined,
+				{ cwd: process.cwd(), sessionManager: parentSessionManager },
+			);
+			const sessionID = JSON.parse(created.content[0].text).session_id;
+
+			const continued = await tool.execute(
+				"call-fork-context-continue-next",
+				{ prompt: "continue fork", existing_session_id: sessionID, run_in_background: false },
+				undefined,
+				undefined,
+				{ cwd: process.cwd(), sessionManager: parentSessionManager },
+			);
+
+			expect(JSON.parse(continued.content[0].text)).toEqual({ session_id: sessionID, response: "done" });
+			expect(promptedTexts).toHaveLength(2);
+			expect(promptedTexts[0]).toContain("<forked_subagent_context>");
+			expect(promptedTexts[1]).toBe("continue fork");
+		} finally {
+			await rm(forkDir, { recursive: true, force: true });
+		}
 	});
 });
