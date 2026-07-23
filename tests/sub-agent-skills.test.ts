@@ -13,6 +13,8 @@ let nextChildSessionFile: string | undefined;
 let openedSessionFiles: string[] = [];
 let sessionStartHandlers: any[] = [];
 let promptedTexts: string[] = [];
+let setModelCalls: any[] = [];
+let setThinkingLevelCalls: any[] = [];
 
 function makeChildSessionManager(kind: string, sessionFile?: string) {
 	return {
@@ -36,19 +38,30 @@ mock.module("@earendil-works/pi-coding-agent", () => ({
 	createAgentSession: async (options: any) => {
 		lastSessionManager = options.sessionManager;
 		lastCreateAgentSessionOptions = options;
-		return {
-			session: {
-				messages: [{ role: "assistant", content: [{ type: "text", text: "done" }] }],
-				sessionManager: options.sessionManager,
-				subscribe() {
-					return () => undefined;
-				},
-				async prompt(text: string) {
-					promptedTexts.push(text);
-				},
-				async abort() {},
-				dispose() {},
+		const session: any = {
+			model: options.model,
+			thinkingLevel: options.thinkingLevel,
+			messages: [{ role: "assistant", content: [{ type: "text", text: "done" }] }],
+			sessionManager: options.sessionManager,
+			subscribe() {
+				return () => undefined;
 			},
+			async prompt(text: string) {
+				promptedTexts.push(text);
+			},
+			async setModel(model: any) {
+				setModelCalls.push(model);
+				session.model = model;
+			},
+			setThinkingLevel(level: any) {
+				setThinkingLevelCalls.push(level);
+				session.thinkingLevel = level;
+			},
+			async abort() {},
+			dispose() {},
+		};
+		return {
+			session,
 		};
 	},
 	DefaultResourceLoader: class {
@@ -98,6 +111,8 @@ async function loadSubAgentExtension() {
 	sessionStartHandlers = [];
 	openedSessionFiles = [];
 	promptedTexts = [];
+	setModelCalls = [];
+	setThinkingLevelCalls = [];
 	nextChildSessionFile = undefined;
 	const { default: subAgentExtension } = await import("../extensions/sub-agent/sub-agent.ts");
 	await subAgentExtension({
@@ -408,6 +423,32 @@ export default {
 			session_id: sessionID,
 			error: "agent cannot be used with existing_session_id; continuing an existing sub-agent keeps its original agent identity and fork/isolated mode. To use a different agent or mode, omit existing_session_id and create a new sub-agent session.",
 		});
+	});
+
+	test("syncs live existing sub-agent sessions to the current parent model before continuing", async () => {
+		const tool = await loadSubAgentExtension();
+		const firstModel = { provider: "test", id: "model-a" };
+		const nextModel = { provider: "test", id: "model-b" };
+
+		const created = await tool.execute(
+			"call-create-model-a",
+			{ prompt: "start", run_in_background: false },
+			undefined,
+			undefined,
+			{ cwd: process.cwd(), model: firstModel, sessionManager: { getSessionFile: () => undefined } },
+		);
+		const sessionID = JSON.parse(created.content[0].text).session_id;
+
+		await tool.execute(
+			"call-continue-model-b",
+			{ prompt: "continue", existing_session_id: sessionID, run_in_background: false },
+			undefined,
+			undefined,
+			{ cwd: process.cwd(), model: nextModel, sessionManager: { getSessionFile: () => undefined } },
+		);
+
+		expect(setModelCalls).toEqual([nextModel]);
+		expect(promptedTexts).toEqual(["start", "continue"]);
 	});
 
 	test("returns compact stateless session ids from persisted session file names", async () => {

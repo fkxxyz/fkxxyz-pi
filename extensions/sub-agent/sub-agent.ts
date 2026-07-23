@@ -938,6 +938,22 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
     return { ok: true, run };
   }
 
+  function modelsAreEqual(a: any, b: any) {
+    return !!a && !!b && a.provider === b.provider && a.id === b.id;
+  }
+
+  async function syncRunRuntimeWithParent(run: SubAgentRun, ctx: any) {
+    const parentModel = ctx.model;
+    if (parentModel && !modelsAreEqual(run.session.model, parentModel)) {
+      await run.session.setModel(parentModel);
+    }
+
+    const parentThinkingLevel = pi.getThinkingLevel();
+    if (typeof parentThinkingLevel === "string" && run.session.thinkingLevel !== parentThinkingLevel) {
+      run.session.setThinkingLevel(parentThinkingLevel);
+    }
+  }
+
   function buildPromptForRun(run: SubAgentRun, prompt: string, referenceBlock: string | undefined) {
     const includeForkContext = run.mode === "fork" && !run.forkContextSent;
     if (includeForkContext) run.forkContextSent = true;
@@ -1093,6 +1109,7 @@ When continuing an existing session, relative reference_docs paths resolve again
           return toolText(makeCreateRunFailurePayload(created));
         }
         const activeRun = created.run;
+        await syncRunRuntimeWithParent(activeRun, ctx);
         run = activeRun;
 
         const abort = async () => {
