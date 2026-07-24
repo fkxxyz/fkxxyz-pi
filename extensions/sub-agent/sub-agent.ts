@@ -83,6 +83,7 @@ type SubAgentRun = {
   forkContextSent?: boolean;
   unsubscribe?: () => void;
   promise?: Promise<void>;
+  updateCallback?: (partialResult: { content: Array<{ type: "text"; text: string }>; details: AgentResultPayload }) => void;
 };
 
 type CreateRunSuccess = {
@@ -370,6 +371,36 @@ function toolText(payload: SubAgentToolPayload) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(payload) }],
   };
+}
+
+function runUpdatePayload(run: SubAgentRun) {
+  const details = buildResultPayload(run);
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(details) }],
+    details,
+  };
+}
+
+function emitRunUpdate(run: SubAgentRun) {
+  run.updateCallback?.(runUpdatePayload(run));
+}
+
+async function materializeNewSessionFile(sessionManager: SessionManager) {
+  const sessionFile = sessionManager.getSessionFile();
+  if (!sessionFile || existsSync(sessionFile)) return sessionManager;
+
+  const header = typeof (sessionManager as any).getHeader === "function"
+    ? (sessionManager as any).getHeader()
+    : null;
+  const entries = typeof (sessionManager as any).getEntries === "function"
+    ? (sessionManager as any).getEntries()
+    : [];
+
+  if (!header || !Array.isArray(entries)) return sessionManager;
+
+  await mkdir(dirname(sessionFile), { recursive: true });
+  await writeFile(sessionFile, [header, ...entries].map((entry) => JSON.stringify(entry)).join("\n") + "\n", { flag: "wx" });
+  return SessionManager.open(sessionFile, sessionManager.getSessionDir(), sessionManager.getCwd());
 }
 
 function shouldReturnResults(results: AgentResultPayload[], waitMode: WaitMode) {
@@ -746,22 +777,30 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
         const messageText = extractTextContent(anyEvent.message?.content);
         if (messageText) {
           run.partial_content = messageText;
+          emitRunUpdate(run);
           return;
         }
 
         if (anyEvent.assistantMessageEvent?.type === "text_delta") {
           run.partial_content = `${run.partial_content ?? ""}${anyEvent.assistantMessageEvent.delta ?? ""}`;
+          emitRunUpdate(run);
         }
       }
 
       if (anyEvent.type === "message_end" && anyEvent.message?.role === "assistant") {
         const text = extractTextContent(anyEvent.message.content);
-        if (text) run.partial_content = text;
+        if (text) {
+          run.partial_content = text;
+          emitRunUpdate(run);
+        }
       }
 
       if (anyEvent.type === "agent_end") {
         const text = extractLastAssistantText(run.session);
-        if (text) run.partial_content = text;
+        if (text) {
+          run.partial_content = text;
+          emitRunUpdate(run);
+        }
       }
     });
   }
@@ -897,6 +936,7 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
       depth: nextDepth,
       createdAt: new Date().toISOString(),
     });
+    childSessionManager = await materializeNewSessionFile(childSessionManager);
 
     const sessionOptions: any = {
       cwd: sessionProjectPath,
@@ -1048,7 +1088,7 @@ When continuing an existing session, relative reference_docs paths resolve again
       project_path: Type.Optional(Type.String({ description: "Project path for creating a new sub-agent session. Defaults to the caller's project path. Do not provide project_path with existing_session_id; an existing session keeps its original project context. When continuing an existing session, relative reference_docs paths resolve against that existing session's project path." })),
       reference_docs: Type.Optional(Type.Array(Type.String(), { description: "File paths to inline as context when paths are much shorter, faster, or more accurate than writing the same context in the prompt. Relative paths resolve against the new session's project_path, or against the existing session's original project path when existing_session_id is used. Useful for exact file snapshots, large specs/logs, or reusable background notes. Do not attach by default." })),
     }),
-    async execute(_toolCallId, args, signal, _onUpdate, ctx) {
+    async execute(_toolCallId, args, signal, onUpdate, ctx) {
       let run: SubAgentRun | undefined;
       let referenceBlock = "";
 
@@ -1111,6 +1151,7 @@ When continuing an existing session, relative reference_docs paths resolve again
         const activeRun = created.run;
         await syncRunRuntimeWithParent(activeRun, ctx);
         run = activeRun;
+        activeRun.updateCallback = onUpdate;
 
         const abort = async () => {
           run = activeRun;
@@ -1124,12 +1165,17 @@ When continuing an existing session, relative reference_docs paths resolve again
         if (args.run_in_background) {
           activeRun.promise = runPrompt(activeRun, args.prompt, referenceBlock).finally(() => {
             signal?.removeEventListener("abort", abort);
+            if (activeRun.updateCallback === onUpdate) activeRun.updateCallback = undefined;
           });
           return toolText(makeSubAgentStartedPayload(activeRun));
         }
 
-        await runPrompt(activeRun, args.prompt, referenceBlock);
-        signal?.removeEventListener("abort", abort);
+        try {
+          await runPrompt(activeRun, args.prompt, referenceBlock);
+        } finally {
+          signal?.removeEventListener("abort", abort);
+          if (activeRun.updateCallback === onUpdate) activeRun.updateCallback = undefined;
+        }
 
         return {
           ...toolText(makeSubAgentCompletedPayload(activeRun)),
@@ -1160,7 +1206,7 @@ When continuing an existing session, relative reference_docs paths resolve again
       session_ids: Type.Array(Type.String(), { description: "Delegated sub-agent session IDs" }),
       wait: StringEnum(["none", "any", "all"] as const, { description: "Return immediately, wait until any session finishes, or wait until all sessions finish" }),
     }),
-    async execute(_toolCallId, args, _signal, _onUpdate, ctx) {
+    async execute(_toolCallId, args, _signal, onUpdate, ctx) {
       while (true) {
         const results = await Promise.all(args.session_ids.map(async (sessionID: string) => {
           let run = runs.get(sessionID);
@@ -1175,6 +1221,11 @@ When continuing an existing session, relative reference_docs paths resolve again
           }
           return buildResultPayload(run);
         }));
+
+        onUpdate?.({
+          content: [{ type: "text" as const, text: JSON.stringify(results) }],
+          details: { results },
+        });
 
         if (shouldReturnResults(results, args.wait as WaitMode)) {
           return { ...toolText(results), details: { results } };

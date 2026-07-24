@@ -1,5 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -15,18 +16,38 @@ let sessionStartHandlers: any[] = [];
 let promptedTexts: string[] = [];
 let setModelCalls: any[] = [];
 let setThinkingLevelCalls: any[] = [];
+let childSessionEventHandlers: any[] = [];
 
 function makeChildSessionManager(kind: string, sessionFile?: string) {
+	const header = { type: "session", version: 3, id: "019f5262-95f7-7785-bccc-150b1c6295c0", timestamp: "2026-07-12T00:00:00.000Z", cwd: tmpdir() };
+	const fileEntries: any[] = [header];
+	let leafId: string | null = null;
+	function appendEntry(entry: any) {
+		fileEntries.push(entry);
+		leafId = entry.id;
+		return entry.id;
+	}
 	return {
 		kind,
-		appendSessionInfo() {
+		appendSessionInfo(name: string) {
 			sessionManagerCalls.push(`${kind}:appendSessionInfo`);
+			return appendEntry({ type: "session_info", id: `${kind}-session-info`, parentId: leafId, timestamp: "2026-07-12T00:00:01.000Z", name });
 		},
 		appendCustomEntry(_type: string, data: unknown) {
 			sessionManagerCalls.push(`${kind}:appendCustomEntry:${JSON.stringify(data)}`);
+			return appendEntry({ type: "custom", customType: _type, data, id: `${kind}-custom`, parentId: leafId, timestamp: "2026-07-12T00:00:02.000Z" });
+		},
+		getEntries() {
+			return fileEntries.filter((entry) => entry.type !== "session");
+		},
+		getHeader() {
+			return header;
 		},
 		getSessionFile() {
 			return sessionFile ?? `/tmp/${kind}/2026-07-12T00-00-00-000Z_019f5262-95f7-7785-bccc-150b1c6295c0.jsonl`;
+		},
+		getSessionDir() {
+			return this.getSessionFile()?.replace(/\/[^/]+$/, "");
 		},
 		getCwd() {
 			return tmpdir();
@@ -43,11 +64,19 @@ mock.module("@earendil-works/pi-coding-agent", () => ({
 			thinkingLevel: options.thinkingLevel,
 			messages: [{ role: "assistant", content: [{ type: "text", text: "done" }] }],
 			sessionManager: options.sessionManager,
-			subscribe() {
+			subscribe(handler: any) {
+				childSessionEventHandlers.push(handler);
 				return () => undefined;
 			},
 			async prompt(text: string) {
 				promptedTexts.push(text);
+				for (const handler of childSessionEventHandlers) {
+					handler({
+						type: "message_update",
+						message: { role: "assistant", content: [{ type: "text", text: "streaming partial" }] },
+						assistantMessageEvent: { type: "text_delta", delta: "streaming partial" },
+					});
+				}
 			},
 			async setModel(model: any) {
 				setModelCalls.push(model);
@@ -113,6 +142,7 @@ async function loadSubAgentExtension() {
 	promptedTexts = [];
 	setModelCalls = [];
 	setThinkingLevelCalls = [];
+	childSessionEventHandlers = [];
 	nextChildSessionFile = undefined;
 	const { default: subAgentExtension } = await import("../extensions/sub-agent/sub-agent.ts");
 	await subAgentExtension({
@@ -451,6 +481,22 @@ export default {
 		expect(promptedTexts).toEqual(["start", "continue"]);
 	});
 
+	test("streams child session progress through the parent tool onUpdate callback", async () => {
+		const tool = await loadSubAgentExtension();
+		const updates: any[] = [];
+
+		await tool.execute(
+			"call-stream-progress",
+			{ prompt: "start", run_in_background: false },
+			undefined,
+			(update: any) => updates.push(update),
+			{ cwd: process.cwd(), sessionManager: { getSessionFile: () => undefined } },
+		);
+
+		expect(updates.length).toBeGreaterThan(0);
+		expect(updates.at(-1).details.partial_content).toBe("streaming partial");
+	});
+
 	test("returns compact stateless session ids from persisted session file names", async () => {
 		const tool = await loadSubAgentExtension();
 		const projectDir = join(tmpdir(), `pi-sub-agent-short-id-${Date.now()}`);
@@ -470,6 +516,34 @@ export default {
 		const expectedTime = (Date.parse("2026-07-12T00:00:00.000Z") - Date.UTC(2000, 0, 1)).toString(36);
 		expect(payload.session_id).toBe(`${expectedTime}_1c6295c0`);
 		expect(payload.session_id.length).toBeLessThanOrEqual(18);
+	});
+
+	test("materializes new sub-agent session files before the first assistant response", async () => {
+		const tool = await loadSubAgentExtension();
+		const projectDir = join(tmpdir(), `pi-sub-agent-materialize-${Date.now()}`);
+		const sessionFile = join(projectDir, ".pi-agent", "sessions", "2026-07-12T00-00-00-000Z_019f5262-95f7-7785-bccc-150b1c6295c0.jsonl");
+		nextChildSessionFile = sessionFile;
+
+		try {
+			const result = await tool.execute(
+				"call-materialize",
+				{ prompt: "start", project_path: projectDir, run_in_background: true },
+				undefined,
+				undefined,
+				{ cwd: projectDir, sessionManager: { getSessionFile: () => undefined } },
+			);
+
+			expect(JSON.parse(result.content[0].text).session_file).toBe(sessionFile);
+			expect(existsSync(sessionFile)).toBe(true);
+			const contents = await readFile(sessionFile, "utf8");
+			expect(contents).toContain('"type":"session"');
+			expect(contents).toContain('"type":"session_info"');
+			expect(contents).toContain('"customType":"sub-agent-metadata"');
+			expect(openedSessionFiles).toContain(sessionFile);
+			expect(lastSessionManager.kind).toBe("open");
+		} finally {
+			await rm(projectDir, { recursive: true, force: true });
+		}
 	});
 
 	test("reopens compact session ids by scanning the parent project session directory before global sessions", async () => {
