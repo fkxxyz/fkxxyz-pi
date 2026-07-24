@@ -9,6 +9,7 @@ export default async function code(pi: ExtensionAPI) {
 	await load("../skills/structured-delegation.ts");
 	await load("../reasoning/reasoning.ts");
 	await load("../exa/exa-mcp.ts");
+	await load("../agent-runtime/agent-runtime.ts");
 	await load("../sub-agent/sub-agent.ts");
 	await load("./apply-patch.ts");
 	await load("./lsp-tools.ts");

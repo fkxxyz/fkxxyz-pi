@@ -1,9 +1,35 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 describe("agent runtime main agent injector", () => {
+  test("code extension loads agent runtime", async () => {
+    const source = await readFile(resolve("extensions/code/code.ts"), "utf8");
+
+    expect(source).toContain('await load("../agent-runtime/agent-runtime.ts");');
+  });
+
+  test("discovers the bundled workspace agent authoring skill", async () => {
+    const handlers: Array<() => Promise<{ skillPaths?: string[] }>> = [];
+    const { default: agentRuntimeExtension } = await import("../extensions/agent-runtime/agent-runtime.ts");
+
+    agentRuntimeExtension({
+      on(eventName: string, handler: () => Promise<{ skillPaths?: string[] }>) {
+        if (eventName === "resources_discover") handlers.push(handler);
+      },
+    } as never);
+
+    expect(handlers).toHaveLength(1);
+    const result = await handlers[0]!();
+    const skillPaths = result.skillPaths ?? [];
+    const skillPath = resolve("extensions/agent-runtime/skills/workspace-agent-authoring");
+
+    expect(skillPaths).toEqual([skillPath]);
+    expect(existsSync(join(skillPath, "SKILL.md"))).toBe(true);
+  });
+
   test("injects the mainAgent prompt from nested .pi/agents.ts", async () => {
     const projectDir = join(tmpdir(), `pi-agent-runtime-main-${Date.now()}`);
     await mkdir(join(projectDir, ".pi"), { recursive: true });

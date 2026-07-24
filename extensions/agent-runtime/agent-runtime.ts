@@ -4,10 +4,11 @@ import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const GLOBAL_AGENTS_FILE = join(homedir(), "pi", "agents.ts");
 const PROJECT_AGENTS_FILE = join(".pi", "agents.ts");
+const WORKSPACE_AGENT_AUTHORING_SKILL_PATH = fileURLToPath(new URL("./skills/workspace-agent-authoring", import.meta.url));
 
 type AgentDefinition = {
   name: string;
@@ -172,6 +173,10 @@ function buildMainAgentSystemPrompt(base: string, agent: AgentDefinition, prompt
 }
 
 export default function agentRuntimeExtension(pi: ExtensionAPI) {
+  pi.on("resources_discover", async () => ({
+    skillPaths: [WORKSPACE_AGENT_AUTHORING_SKILL_PATH],
+  }));
+
   pi.on("before_agent_start", async (event, ctx) => {
     const catalog = await loadAgentCatalog(getCwd(ctx));
     if (!catalog.mainAgent) return;
