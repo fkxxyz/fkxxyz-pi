@@ -84,6 +84,27 @@ type SubAgentRun = {
   unsubscribe?: () => void;
   promise?: Promise<void>;
   updateCallback?: (partialResult: { content: Array<{ type: "text"; text: string }>; details: AgentResultPayload }) => void;
+  piWebLive?: PiWebLiveSessionRegistration;
+};
+
+type PiWebLiveSessionRegistration = {
+  setPromptRunning(running: boolean): void;
+  unregister(): void;
+};
+
+type PiWebLiveSessionWrapper = {
+  sessionId: string;
+  sessionFile: string;
+  isAlive(): boolean;
+  isRunning(): boolean;
+  onEvent(listener: (event: AgentSessionEvent | Record<string, unknown>) => void): () => void;
+  send(command: Record<string, unknown>): Promise<unknown>;
+  destroy(): void;
+};
+
+type PiWebGlobalState = typeof globalThis & {
+  __piSessions?: Map<string, PiWebLiveSessionWrapper>;
+  __piRunningListeners?: Set<(ids: string[]) => void>;
 };
 
 type CreateRunSuccess = {
@@ -140,6 +161,144 @@ type SubAgentToolPayload =
 // Used only to pass recursion depth into auto-loaded nested extension instances.
 // The run registry itself intentionally stays inside each extension instance.
 const depthContext = new AsyncLocalStorage<number>();
+
+function notifyPiWebRunningChange() {
+  const state = globalThis as PiWebGlobalState;
+  const registry = state.__piSessions;
+  if (!(registry instanceof Map)) return;
+
+  const ids = new Set<string>();
+  for (const [sessionId, session] of registry) {
+    try {
+      if (typeof session?.isRunning === "function" && session.isRunning()) ids.add(session.sessionId || sessionId);
+    } catch {
+      // A broken foreign wrapper must not break sub-agent cleanup or pi-web routes.
+    }
+  }
+
+  for (const listener of state.__piRunningListeners ?? []) {
+    try {
+      listener([...ids]);
+    } catch {
+      // Match pi-web's listener isolation: one failed SSE client must not affect others.
+    }
+  }
+}
+
+function registerPiWebLiveSession(run: SubAgentRun): PiWebLiveSessionRegistration | undefined {
+  const state = globalThis as PiWebGlobalState;
+  if (state.__piSessions !== undefined && !(state.__piSessions instanceof Map)) {
+    console.warn("[sub-agent] pi-web live-session adapter disabled: globalThis.__piSessions is not a Map");
+    return undefined;
+  }
+
+  const sessionId = run.session.sessionId;
+  if (!sessionId) return undefined;
+
+  const listeners = new Set<(event: AgentSessionEvent | Record<string, unknown>) => void>();
+  let alive = true;
+  let promptRunning = run.status === "running";
+  let unsubscribe: (() => void) | undefined;
+
+  const wrapper: PiWebLiveSessionWrapper = {
+    get sessionId() {
+      return run.session.sessionId;
+    },
+    get sessionFile() {
+      return run.session.sessionFile ?? run.session.sessionManager?.getSessionFile?.() ?? "";
+    },
+    isAlive() {
+      return alive;
+    },
+    isRunning() {
+      return alive && (promptRunning || !!run.session.isStreaming || !!(run.session as any).isCompacting || !!(run.session as any).isBashRunning);
+    },
+    onEvent(listener) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    async send(command) {
+      const type = command.type;
+      if (type === "get_state") {
+        const contextUsage = typeof (run.session as any).getContextUsage === "function" ? (run.session as any).getContextUsage() : null;
+        return {
+          sessionId: run.session.sessionId,
+          sessionFile: run.session.sessionFile ?? run.session.sessionManager?.getSessionFile?.() ?? "",
+          isStreaming: !!run.session.isStreaming,
+          isPromptRunning: promptRunning,
+          isBashRunning: !!(run.session as any).isBashRunning,
+          isCompacting: !!(run.session as any).isCompacting,
+          autoCompactionEnabled: !!(run.session as any).autoCompactionEnabled,
+          autoRetryEnabled: !!(run.session as any).autoRetryEnabled,
+          model: run.session.model ? { id: run.session.model.id, provider: run.session.model.provider } : undefined,
+          messageCount: 0,
+          pendingMessageCount: (run.session as any).pendingMessageCount ?? 0,
+          queuedMessages: {
+            steering: typeof (run.session as any).getSteeringMessages === "function" ? [...(run.session as any).getSteeringMessages()] : [],
+            followUp: typeof (run.session as any).getFollowUpMessages === "function" ? [...(run.session as any).getFollowUpMessages()] : [],
+          },
+          contextUsage: contextUsage
+            ? { percent: contextUsage.percent, contextWindow: contextUsage.contextWindow, tokens: contextUsage.tokens }
+            : null,
+          systemPrompt: (run.session as any).agent?.state?.systemPrompt ?? "",
+          thinkingLevel: (run.session as any).agent?.state?.thinkingLevel ?? run.session.thinkingLevel ?? "off",
+          extensionStatuses: [],
+          extensionWidgets: [],
+        };
+      }
+      if (type === "abort") {
+        await run.session.abort();
+        return null;
+      }
+      throw new Error(`Unsupported sub-agent pi-web live adapter command: ${String(type)}`);
+    },
+    destroy() {
+      registration.unregister();
+    },
+  };
+
+  const registration: PiWebLiveSessionRegistration = {
+    setPromptRunning(running: boolean) {
+      if (!alive) return;
+      promptRunning = running;
+      notifyPiWebRunningChange();
+    },
+    unregister() {
+      if (!alive) return;
+      alive = false;
+      unsubscribe?.();
+      listeners.clear();
+      const registry = state.__piSessions;
+      if (registry?.get(sessionId) === wrapper) registry.delete(sessionId);
+      notifyPiWebRunningChange();
+    },
+  };
+
+  unsubscribe = run.session.subscribe((event: AgentSessionEvent) => {
+    for (const listener of listeners) {
+      try {
+        listener(event);
+      } catch {
+        // Preserve pi-web behavior: client listener failures are isolated.
+      }
+    }
+    notifyPiWebRunningChange();
+  });
+
+  if (!state.__piSessions) state.__piSessions = new Map();
+  const existing = state.__piSessions.get(sessionId);
+  if (existing && existing !== wrapper && typeof existing.isAlive === "function" && existing.isAlive()) {
+    console.warn(`[sub-agent] pi-web live-session adapter skipped: session ${sessionId} is already registered`);
+    unsubscribe?.();
+    return undefined;
+  }
+
+  state.__piSessions.set(sessionId, wrapper);
+  notifyPiWebRunningChange();
+  return registration;
+}
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -758,6 +917,7 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
   pi.on("session_shutdown", async () => {
     for (const run of runs.values()) {
       run.unsubscribe?.();
+      run.piWebLive?.unregister();
       if (run.status === "running") {
         run.status = "stopped";
         run.completedAt = Date.now();
@@ -1012,6 +1172,8 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
     run.status = "running";
     run.error = null;
     run.completedAt = undefined;
+    run.piWebLive ??= registerPiWebLiveSession(run);
+    run.piWebLive?.setPromptRunning(true);
 
     const fullPrompt = buildPromptForRun(run, prompt, referenceBlock);
 
@@ -1031,6 +1193,10 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
         run.error = extractHelpfulErrorMessage(error);
         run.completedAt = Date.now();
       }
+    } finally {
+      run.piWebLive?.setPromptRunning(false);
+      run.piWebLive?.unregister();
+      run.piWebLive = undefined;
     }
   }
 
@@ -1164,6 +1330,8 @@ When continuing an existing session, relative reference_docs paths resolve again
 
         if (args.run_in_background) {
           activeRun.promise = runPrompt(activeRun, args.prompt, referenceBlock).finally(() => {
+            activeRun.piWebLive?.unregister();
+            activeRun.piWebLive = undefined;
             signal?.removeEventListener("abort", abort);
             if (activeRun.updateCallback === onUpdate) activeRun.updateCallback = undefined;
           });
@@ -1173,6 +1341,8 @@ When continuing an existing session, relative reference_docs paths resolve again
         try {
           await runPrompt(activeRun, args.prompt, referenceBlock);
         } finally {
+          activeRun.piWebLive?.unregister();
+          activeRun.piWebLive = undefined;
           signal?.removeEventListener("abort", abort);
           if (activeRun.updateCallback === onUpdate) activeRun.updateCallback = undefined;
         }

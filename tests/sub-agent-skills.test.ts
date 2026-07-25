@@ -17,6 +17,9 @@ let promptedTexts: string[] = [];
 let setModelCalls: any[] = [];
 let setThinkingLevelCalls: any[] = [];
 let childSessionEventHandlers: any[] = [];
+let nextSessionStreaming = false;
+let nextPromptBlocker: Promise<void> | undefined;
+let resolveNextPromptBlocker: (() => void) | undefined;
 
 function makeChildSessionManager(kind: string, sessionFile?: string) {
 	const header = { type: "session", version: 3, id: "019f5262-95f7-7785-bccc-150b1c6295c0", timestamp: "2026-07-12T00:00:00.000Z", cwd: tmpdir() };
@@ -64,6 +67,21 @@ mock.module("@earendil-works/pi-coding-agent", () => ({
 			thinkingLevel: options.thinkingLevel,
 			messages: [{ role: "assistant", content: [{ type: "text", text: "done" }] }],
 			sessionManager: options.sessionManager,
+			get sessionId() {
+				return options.sessionManager.getHeader?.()?.id ?? "019f5262-95f7-7785-bccc-150b1c6295c0";
+			},
+			get sessionFile() {
+				return options.sessionManager.getSessionFile?.();
+			},
+			get isStreaming() {
+				return nextSessionStreaming;
+			},
+			isCompacting: false,
+			isBashRunning: false,
+			autoCompactionEnabled: false,
+			autoRetryEnabled: false,
+			pendingMessageCount: 0,
+			agent: { state: { systemPrompt: "child system", thinkingLevel: options.thinkingLevel ?? "off" } },
 			subscribe(handler: any) {
 				childSessionEventHandlers.push(handler);
 				return () => undefined;
@@ -77,6 +95,7 @@ mock.module("@earendil-works/pi-coding-agent", () => ({
 						assistantMessageEvent: { type: "text_delta", delta: "streaming partial" },
 					});
 				}
+				if (nextPromptBlocker) await nextPromptBlocker;
 			},
 			async setModel(model: any) {
 				setModelCalls.push(model);
@@ -88,6 +107,9 @@ mock.module("@earendil-works/pi-coding-agent", () => ({
 			},
 			async abort() {},
 			dispose() {},
+			getContextUsage: () => null,
+			getSteeringMessages: () => [],
+			getFollowUpMessages: () => [],
 		};
 		return {
 			session,
@@ -144,6 +166,11 @@ async function loadSubAgentExtension() {
 	setThinkingLevelCalls = [];
 	childSessionEventHandlers = [];
 	nextChildSessionFile = undefined;
+	nextSessionStreaming = false;
+	nextPromptBlocker = undefined;
+	resolveNextPromptBlocker = undefined;
+	delete (globalThis as any).__piSessions;
+	delete (globalThis as any).__piRunningListeners;
 	const { default: subAgentExtension } = await import("../extensions/sub-agent/sub-agent.ts");
 	await subAgentExtension({
 		on(eventName: string, handler: any) {
@@ -574,6 +601,68 @@ export default {
 			expect(openedSessionFiles[0]).toBe(join(parentSessionDir, fileName));
 		} finally {
 			await rm(join(agentDir, "sessions"), { recursive: true, force: true });
+		}
+	});
+
+	test("registers running child sessions in the Pi Web live registry and unregisters after completion", async () => {
+		const tool = await loadSubAgentExtension();
+		const projectDir = join(tmpdir(), `pi-sub-agent-pi-web-live-${Date.now()}`);
+		const sessionFile = join(projectDir, ".pi-agent", "sessions", "2026-07-12T00-00-00-000Z_019f5262-95f7-7785-bccc-150b1c6295c0.jsonl");
+		nextChildSessionFile = sessionFile;
+		nextSessionStreaming = true;
+		nextPromptBlocker = new Promise<void>((resolve) => {
+			resolveNextPromptBlocker = resolve;
+		});
+
+		const runningSnapshots: string[][] = [];
+		(globalThis as any).__piRunningListeners = new Set([(ids: string[]) => runningSnapshots.push(ids)]);
+
+		try {
+			const result = await tool.execute(
+				"call-pi-web-live-registry",
+				{ prompt: "start", project_path: projectDir, run_in_background: true },
+				undefined,
+				undefined,
+				{ cwd: projectDir, sessionManager: { getSessionFile: () => undefined } },
+			);
+
+			const payload = JSON.parse(result.content[0].text);
+			expect(payload.session_file).toBe(sessionFile);
+
+			const registry = (globalThis as any).__piSessions;
+			expect(registry).toBeInstanceOf(Map);
+			const wrapper = registry.get("019f5262-95f7-7785-bccc-150b1c6295c0");
+			expect(wrapper).toBeTruthy();
+			expect(wrapper.sessionId).toBe("019f5262-95f7-7785-bccc-150b1c6295c0");
+			expect(wrapper.sessionFile).toBe(sessionFile);
+			expect(wrapper.isAlive()).toBe(true);
+			expect(wrapper.isRunning()).toBe(true);
+			expect(runningSnapshots.some((ids) => ids.includes("019f5262-95f7-7785-bccc-150b1c6295c0"))).toBe(true);
+
+			const events: any[] = [];
+			const unsubscribe = wrapper.onEvent((event: any) => events.push(event));
+			for (const handler of childSessionEventHandlers) {
+				handler({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "live" }, message: { role: "assistant", content: [{ type: "text", text: "live" }] } });
+			}
+			expect(events.at(-1)?.type).toBe("message_update");
+			unsubscribe();
+
+			expect(await wrapper.send({ type: "get_state" })).toMatchObject({
+				sessionId: "019f5262-95f7-7785-bccc-150b1c6295c0",
+				sessionFile,
+				isStreaming: true,
+				isPromptRunning: true,
+			});
+
+			nextSessionStreaming = false;
+			resolveNextPromptBlocker?.();
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			expect(registry.has("019f5262-95f7-7785-bccc-150b1c6295c0")).toBe(false);
+			expect(runningSnapshots.at(-1)).not.toContain("019f5262-95f7-7785-bccc-150b1c6295c0");
+		} finally {
+			resolveNextPromptBlocker?.();
+			await rm(projectDir, { recursive: true, force: true });
 		}
 	});
 
