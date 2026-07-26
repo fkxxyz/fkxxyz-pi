@@ -212,11 +212,32 @@ export default {
 			await sessionStartHandlers[0]({ type: "session_start", reason: "new" }, { cwd: projectDir });
 
 			expect(latestSubAgentTool().description).toContain("helper: Session cwd helper");
-			expect(latestSubAgentTool().parameters.agent.description).toContain("Available agents: helper");
+			expect(latestSubAgentTool().parameters.agent.description).toContain("Available named agents: helper");
 		} finally {
 			process.chdir(originalCwd);
 			await rm(projectDir, { recursive: true, force: true });
 		}
+	});
+
+	test("omitted agent inherits parent effective system prompt", async () => {
+		lastResourceLoaderOptions = undefined;
+		const tool = await loadSubAgentExtension();
+		await tool.execute(
+			"call-default-inherit-parent",
+			{ prompt: "do work", run_in_background: false },
+			undefined,
+			undefined,
+			{
+				cwd: process.cwd(),
+				getSystemPrompt: () => "parent effective system prompt",
+				sessionManager: { getSessionFile: () => undefined },
+			},
+		);
+
+		expect(lastResourceLoaderOptions.systemPromptOverride("child base prompt")).toBe("parent effective system prompt");
+		const appended = lastResourceLoaderOptions.appendSystemPromptOverride([]).join("\n");
+		expect(appended).toContain('delegated recursive sub-agent "sub-agent"');
+		expect(appended).not.toContain("parent effective system prompt");
 	});
 
 	test("loads systemPromptFile relative to agents.ts", async () => {
@@ -381,6 +402,45 @@ export default {
 		}
 	});
 
+	test("treats agent=generic as explicit generic isolated sub-agent", async () => {
+		lastResourceLoaderOptions = undefined;
+		const projectDir = join(tmpdir(), `pi-sub-agent-generic-${Date.now()}`);
+		await mkdir(join(projectDir, ".pi"), { recursive: true });
+		await writeFile(join(projectDir, ".pi", "agents.ts"), `
+export default {
+  helper: {
+    description: "Project helper agent",
+    systemPrompt: "helper prompt"
+  },
+  generic: {
+    description: "Should be shadowed by reserved generic mode",
+    systemPrompt: "generic named prompt"
+  }
+};
+`);
+
+		try {
+			const tool = await loadSubAgentExtension();
+			const result = await tool.execute(
+				"call-generic-agent",
+				{ prompt: "do work", agent: "generic", project_path: projectDir, run_in_background: false },
+				undefined,
+				undefined,
+				{ cwd: process.cwd(), getSystemPrompt: () => "parent effective system prompt", sessionManager: { getSessionFile: () => undefined } },
+			);
+
+			expect(JSON.parse(result.content[0].text)).toEqual({ session_id: expect.any(String), response: "done" });
+			expect(lastResourceLoaderOptions.systemPromptOverride?.("child base prompt") ?? "child base prompt").toBe("child base prompt");
+			const appended = lastResourceLoaderOptions.appendSystemPromptOverride([]).join("\n");
+			expect(appended).toContain('delegated recursive sub-agent "sub-agent"');
+			expect(appended).not.toContain("<sub_agent_instructions");
+			expect(appended).not.toContain("generic named prompt");
+			expect(sessionManagerCalls.some((call) => call.includes('"agent":null'))).toBe(true);
+		} finally {
+			await rm(projectDir, { recursive: true, force: true });
+		}
+	});
+
 	test("loads project agents.ts descriptions and inline system prompts", async () => {
 		lastResourceLoaderOptions = undefined;
 		const projectDir = join(tmpdir(), `pi-sub-agent-project-${Date.now()}`);
@@ -423,15 +483,22 @@ export default {
 	test("describes delegation, fork, reference_docs, and continuation boundaries", async () => {
 		const tool = await loadSubAgentExtension();
 
-		expect(tool.description).toContain("expected benefit outweighs the cost");
-		expect(tool.description).toContain("Do not delegate merely because a task exists");
-		expect(tool.description).toContain("Use agent=\"fork\" sparingly");
-		expect(tool.description).toContain("Fork is not a specialized worker; it is a context-inheritance mode");
+		expect(tool.description).toContain("Prefer delegation when a task is independently executable");
+		expect(tool.description).toContain("Keep work in the parent only when delegation would clearly add coordination cost without benefit");
+		expect(tool.description).not.toContain("Do not delegate merely because a task exists");
+		expect(tool.description).toContain("Omit \"agent\" for ordinary isolated delegation");
+		expect(tool.description).toContain("Use agent=\"generic\"");
+		expect(tool.description).not.toContain("Available agents from");
+		expect(tool.description).not.toContain("Named agents are loaded");
+		expect(tool.description).not.toContain("shallow-merge");
+		expect(tool.description).not.toContain("no parent/named agent prompt injection");
+		expect(tool.description).toContain("Use agent=\"fork\" when inherited conversation context is materially needed");
+		expect(tool.description).toContain("Fork is a context-inheritance mode, not a specialized worker");
 		expect(tool.description).toContain("reference_docs and fork are independent optimizations");
 		expect(tool.description).toContain("Use existing_session_id only to continue the same child session");
 		expect(tool.description).toContain("Do not provide project_path or agent with existing_session_id");
 		expect(tool.description).toContain("relative reference_docs paths resolve against that existing session's project path");
-		expect(tool.promptGuidelines).toContain("Use sub_agent only when an independently executable child task has clear payoff: parallelism, isolation, specialized behavior, independent review, context preservation, or filtering noisy output.");
+		expect(tool.promptGuidelines).toContain("Prefer sub_agent for independently executable work with clear payoff: parallelism, isolation, specialized behavior, independent review, context preservation, or filtering noisy output.");
 		expect(tool.parameters.prompt.description).toContain("for fork or existing_session_id, provide the incremental follow-up task");
 		expect(tool.parameters.prompt.optional).toBeUndefined();
 		expect(tool.parameters.agent.optional).toBe(true);
@@ -439,7 +506,14 @@ export default {
 		expect(tool.parameters.existing_session_id.optional).toBe(true);
 		expect(tool.parameters.project_path.optional).toBe(true);
 		expect(tool.parameters.reference_docs.optional).toBe(true);
-		expect(tool.parameters.agent.description).toContain("Do not provide agent with existing_session_id");
+		expect(tool.parameters.agent.description).toContain("Role or context mode for a new sub-agent session");
+		expect(tool.parameters.agent.description).toContain("Omit for ordinary isolated delegation");
+		expect(tool.parameters.agent.description).toContain("Use a named agent when its description clearly matches the task");
+		expect(tool.parameters.agent.description).toContain("Use \"generic\" for a neutral helper");
+		expect(tool.parameters.agent.description).toContain("Use \"fork\" when inherited conversation context is materially needed");
+		expect(tool.parameters.agent.description).toContain("Do not provide with existing_session_id");
+		expect(tool.parameters.agent.description).not.toContain("prompt injection");
+		expect(tool.parameters.agent.description).not.toContain("takes precedence");
 		expect(tool.parameters.project_path.description).toContain("Do not provide project_path with existing_session_id");
 		expect(tool.parameters.existing_session_id.description).toContain("Use only to continue, refine, follow up, or correct work");
 		expect(tool.parameters.reference_docs.description).toContain("paths are much shorter, faster, or more accurate");
@@ -764,8 +838,10 @@ describe("sub_agent fork mode", () => {
 				{ prompt: "do work", agent: "fork", run_in_background: false },
 				undefined,
 				undefined,
-				{ cwd: process.cwd(), sessionManager: parentSessionManager },
+				{ cwd: process.cwd(), getSystemPrompt: () => "parent fork system prompt", sessionManager: parentSessionManager },
 			);
+
+			expect(lastResourceLoaderOptions.systemPromptOverride("child base prompt")).toBe("parent fork system prompt");
 
 			expect(JSON.parse(result.content[0].text)).toEqual({ session_id: expect.any(String), response: "done" });
 			expect(sessionManagerCalls).toContain("getBranch:assistant-1");

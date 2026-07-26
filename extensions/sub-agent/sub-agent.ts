@@ -1022,7 +1022,8 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
   async function createRun(args: any, ctx: any, projectPath: string, existingRun?: SubAgentRun): Promise<CreateRunResult> {
     const requestedAgent = sanitizeOptionalString(args.agent);
     const forkMode = requestedAgent === "fork";
-    const effectiveRequestedAgent = forkMode ? undefined : requestedAgent;
+    const genericMode = requestedAgent === "generic";
+    const effectiveRequestedAgent = forkMode || genericMode ? undefined : requestedAgent;
     const runtimeCatalog = await loadAgentCatalog(projectPath);
     const agent = effectiveRequestedAgent ? runtimeCatalog.agents.get(effectiveRequestedAgent) : undefined;
     if (effectiveRequestedAgent && !agent) {
@@ -1051,10 +1052,15 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
     const agentDir = getAgentDir();
     const systemPrompt = agent ? await resolveAgentSystemPrompt(agent) : undefined;
     const agentBlock = buildSubAgentSystemPrompt({ agent, depth: nextDepth, systemPrompt });
+    const shouldInheritParentSystemPrompt = !genericMode && !effectiveRequestedAgent;
+    const parentSystemPrompt = shouldInheritParentSystemPrompt && typeof ctx.getSystemPrompt === "function"
+      ? ctx.getSystemPrompt()
+      : undefined;
     const loader = new DefaultResourceLoader({
       cwd: sessionProjectPath,
       agentDir,
       extensionsOverride: filterAgentRuntimeExtension,
+      ...(parentSystemPrompt ? { systemPromptOverride: () => parentSystemPrompt } : {}),
       appendSystemPromptOverride: (base: string[]) => [...base, agentBlock],
     });
 
@@ -1084,7 +1090,7 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
       childSessionManager = SessionManager.create(sessionProjectPath, undefined, { parentSession });
     }
 
-    const subAgentLabel = forkMode ? "sub-agent:fork" : requestedAgent ? `sub-agent:${requestedAgent}` : "sub-agent";
+    const subAgentLabel = forkMode ? "sub-agent:fork" : effectiveRequestedAgent ? `sub-agent:${effectiveRequestedAgent}` : "sub-agent";
     childSessionManager.appendSessionInfo(`${subAgentLabel} ${new Date().toISOString()}`);
     childSessionManager.appendCustomEntry("sub-agent-metadata", {
       agent: effectiveRequestedAgent ?? null,
@@ -1118,7 +1124,7 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
     const id = shortSessionIdFromSessionFile(session.sessionManager.getSessionFile()) ?? makeLegacyRunID();
     const run: SubAgentRun = {
       id,
-      agentName: forkMode ? "fork" : requestedAgent ?? "sub-agent",
+      agentName: forkMode ? "fork" : effectiveRequestedAgent ?? "sub-agent",
       projectPath: sessionProjectPath,
       prompt: args.prompt,
       depth: nextDepth,
@@ -1208,26 +1214,24 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
     pi.registerTool({
     name: "sub_agent",
     label: "Sub Agent",
-    description: `Use when a task can be delegated as an independently executable unit and the expected benefit outweighs the cost of creating, coordinating, and integrating a child session. Useful payoffs include parallelism, isolation, specialized agent behavior, independent review, context-window preservation, filtering noisy or large tool output into a compact result, or amortizing repeated context transfer.
+    description: `Prefer delegation when a task is independently executable and a child session can reduce parent context load, isolate work, provide independent review, use specialized agent behavior, run in parallel, filter noisy or large tool output into a compact result, or amortize repeated context transfer.
 
 Delegate independent tasks in parallel when this reduces elapsed time or parent-session complexity: separate research questions, isolated file changes, separate code-review areas, independent investigations, alternative implementations, or extracting a small answer from a large/noisy source. Keep dependent work sequential.
 
-Do not delegate merely because a task exists. Do not use sub-agents for work the parent can complete directly with comparable or lower total cost, for tasks that require continuous parent judgment, or when the next step is simply to wait for an existing result.
+Keep work in the parent only when delegation would clearly add coordination cost without benefit, when the task requires continuous parent-level judgment, or when the next step is simply to wait for an already-running sub-agent result.
 
-Available agents from ${GLOBAL_AGENTS_FILE} and ${PROJECT_AGENTS_FILE}:
+Available agents:
 ${availableAgents}
 
-Named agents are loaded from global ${GLOBAL_AGENTS_FILE} first, then from the target project's ${PROJECT_AGENTS_FILE}; project entries shallow-merge and override global entries.
-
 Agent selection:
-- Omit "agent" for a new isolated generic sub-agent with the same workspace configuration. This is the default for most delegated work.
-- Use a named agent only when its description matches the delegation need.
-- Use agent="fork" sparingly. Fork is not a specialized worker; it is a context-inheritance mode. Use it only when the task is clearly independent yet accurate execution would otherwise require restating substantial parent-session context, such as prior decisions, failed attempts, nuanced constraints, or accumulated findings. This is uncommon because tasks that need extensive shared context are often not truly independent.
-- Do not use fork as a convenience for work the parent can complete directly, or for tasks whose required context is short enough to state in the prompt. Fork creates a child session from the parent's current conversation branch and takes precedence over any agent named "fork".
+- Omit "agent" for ordinary isolated delegation. This is the default for most delegated work.
+- Use a named agent when its description clearly matches the delegated task.
+- Use agent="generic" only when no named agent fits, or when a neutral general-purpose helper is explicitly needed.
+- Use agent="fork" when inherited conversation context is materially needed for an independent task. Fork is a context-inheritance mode, not a specialized worker; if the needed context is short, put it in prompt instead.
 
 Prompt and context transfer:
-- For isolated sub-agents, make the prompt self-contained enough to execute: state the task, key constraints, and expected result.
-- For fork, give only the incremental task; inherited conversation history supplies the shared context.
+- For inherited isolated sub-agents (agent omitted) and fork, give only the delegated task when the parent prompt already supplies the needed operating context.
+- For generic or named isolated sub-agents, make the prompt self-contained enough to execute: state the task, key constraints, and expected result.
 - Use reference_docs when passing document paths is much shorter, faster, or less error-prone than writing the same context into the prompt. Each referenced document should materially reduce prompt length, improve accuracy, or provide exact context the child needs.
 - If substantial background will likely be reused across multiple sub-agent calls, consider writing it once to a temporary/reference document and passing that path via reference_docs. This amortizes one documentation cost across repeated delegations.
 - reference_docs and fork are independent optimizations: fork transfers conversation history; reference_docs transfers explicit document content. They can be used together when both help.
@@ -1240,15 +1244,15 @@ When existing_session_id is provided, the tool continues that child session with
 When continuing an existing session, relative reference_docs paths resolve against that existing session's project path.${diagnostics}`,
     promptSnippet: "Create or continue a recursive delegated sub-agent session for independent work",
     promptGuidelines: [
-      "Use sub_agent only when an independently executable child task has clear payoff: parallelism, isolation, specialized behavior, independent review, context preservation, or filtering noisy output.",
-      "Prefer isolated sub-agents by default; use fork sparingly when substantial inherited conversation context is necessary for an otherwise independent task.",
+      "Prefer sub_agent for independently executable work with clear payoff: parallelism, isolation, specialized behavior, independent review, context preservation, or filtering noisy output.",
+      "Prefer ordinary isolated delegation by omitting agent; use named agents when descriptions match; use generic as a neutral fallback; use fork only when inherited context is materially needed.",
       "Use reference_docs to reduce repeated or verbose context transfer when path-based context is cheaper or more accurate than prompt text.",
       "Use sub_agent_result to check background delegated work instead of re-running the same task.",
       "Use sub_agent_stop to halt delegated work that should no longer continue.",
     ],
     parameters: Type.Object({
       prompt: Type.String({ description: "Task for the child session. For isolated sessions, include enough context to execute; for fork or existing_session_id, provide the incremental follow-up task." }),
-      agent: Type.Optional(Type.String({ description: `Optional mode/name for creating a new sub-agent session. Omit for a new isolated generic sub-agent. Use a named agent only when its description matches the task. Use "fork" sparingly for an independent task that needs substantial inherited parent-session context; fork takes precedence over any agent named "fork". Do not provide agent with existing_session_id; an existing session keeps its original agent identity and fork/isolated mode. Available agents: ${catalog ? ([...catalog.agents.keys()].sort().join(", ") || "(none found in this session cwd)") : "resolved from current session cwd at session start, and from project_path/current cwd again at execution time"}` })),
+      agent: Type.Optional(Type.String({ description: `Role or context mode for a new sub-agent session. Omit for ordinary isolated delegation. Use a named agent when its description clearly matches the task. Use "generic" for a neutral helper when no named agent fits. Use "fork" when inherited conversation context is materially needed. Do not provide with existing_session_id. Available named agents: ${catalog ? ([...catalog.agents.keys()].sort().join(", ") || "(none found in this session cwd)") : "resolved from current session cwd at session start, and from project_path/current cwd again at execution time"}` })),
       run_in_background: Type.Optional(Type.Boolean({ description: "Whether to run the sub-agent asynchronously in the background. Default to false: if the parent agent needs this sub-agent's result before continuing, or has no other independent work to do in parallel, run synchronously and wait for completion. This avoids an immediate return followed by an unnecessary sub_agent_result wait call. Set true only when the parent agent will do other independent work while the sub-agent runs, or when launching multiple independent sub-agents in parallel. If the next step is simply to wait for this result, use false." })),
       existing_session_id: Type.Optional(Type.String({ description: "Existing delegated sub-agent session ID to continue. Use only to continue, refine, follow up, or correct work in that same child session. Mutually exclusive with project_path and agent: to use a different project, agent, or mode, create a new sub-agent instead." })),
       project_path: Type.Optional(Type.String({ description: "Project path for creating a new sub-agent session. Defaults to the caller's project path. Do not provide project_path with existing_session_id; an existing session keeps its original project context. When continuing an existing session, relative reference_docs paths resolve against that existing session's project path." })),
