@@ -17,6 +17,7 @@ let promptedTexts: string[] = [];
 let setModelCalls: any[] = [];
 let setThinkingLevelCalls: any[] = [];
 let childSessionEventHandlers: any[] = [];
+let childBindExtensionCalls: any[] = [];
 let nextSessionStreaming = false;
 let nextPromptBlocker: Promise<void> | undefined;
 let resolveNextPromptBlocker: (() => void) | undefined;
@@ -85,6 +86,9 @@ mock.module("@earendil-works/pi-coding-agent", () => ({
 			subscribe(handler: any) {
 				childSessionEventHandlers.push(handler);
 				return () => undefined;
+			},
+			bindExtensions(bindings: any) {
+				childBindExtensionCalls.push(bindings);
 			},
 			async prompt(text: string) {
 				promptedTexts.push(text);
@@ -157,7 +161,7 @@ mock.module("typebox", () => ({
 	},
 }));
 
-async function loadSubAgentExtension() {
+async function loadSubAgentExtension(activeTools: string[] = []) {
 	toolDefinitions = [];
 	sessionStartHandlers = [];
 	openedSessionFiles = [];
@@ -165,6 +169,7 @@ async function loadSubAgentExtension() {
 	setModelCalls = [];
 	setThinkingLevelCalls = [];
 	childSessionEventHandlers = [];
+	childBindExtensionCalls = [];
 	nextChildSessionFile = undefined;
 	nextSessionStreaming = false;
 	nextPromptBlocker = undefined;
@@ -180,7 +185,7 @@ async function loadSubAgentExtension() {
 			toolDefinitions.push(definition);
 		},
 		getThinkingLevel: () => undefined,
-		getActiveTools: () => [],
+		getActiveTools: () => activeTools,
 	} as never);
 	return toolDefinitions.find((tool) => tool.name === "sub_agent");
 }
@@ -217,6 +222,23 @@ export default {
 			process.chdir(originalCwd);
 			await rm(projectDir, { recursive: true, force: true });
 		}
+	});
+
+	test("binds child extensions and does not use parent active tools as a child allowlist", async () => {
+		lastCreateAgentSessionOptions = undefined;
+		childBindExtensionCalls = [];
+		const tool = await loadSubAgentExtension(["read", "bash", "edit", "write"]);
+
+		await tool.execute(
+			"call-child-runtime",
+			{ prompt: "do work", run_in_background: false },
+			undefined,
+			undefined,
+			{ cwd: process.cwd(), sessionManager: { getSessionFile: () => undefined } },
+		);
+
+		expect(lastCreateAgentSessionOptions.tools).toBeUndefined();
+		expect(childBindExtensionCalls).toHaveLength(1);
 	});
 
 	test("omitted agent inherits parent effective system prompt", async () => {

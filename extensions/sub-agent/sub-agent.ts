@@ -992,11 +992,13 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
         model: ctx.model ?? undefined,
         modelRegistry: ctx.modelRegistry,
         thinkingLevel: pi.getThinkingLevel(),
-        tools: pi.getActiveTools(),
         resourceLoader: loader,
         sessionManager: childSessionManager,
       }),
     );
+    if (typeof (session as any).bindExtensions === "function") {
+      await (session as any).bindExtensions({});
+    }
 
     const text = extractLastAssistantText(session);
     const run: SubAgentRun = {
@@ -1113,13 +1115,13 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
       resourceLoader: loader,
       sessionManager: childSessionManager,
     };
-    if (!agent?.workspace) {
-      sessionOptions.tools = pi.getActiveTools();
-    }
 
     const { session } = await depthContext.run(nextDepth, async () =>
       createAgentSession(sessionOptions),
     );
+    if (typeof (session as any).bindExtensions === "function") {
+      await (session as any).bindExtensions({});
+    }
 
     const id = shortSessionIdFromSessionFile(session.sessionManager.getSessionFile()) ?? makeLegacyRunID();
     const run: SubAgentRun = {
