@@ -37,6 +37,34 @@ describe("experience capture skill discovery extension", () => {
 	});
 });
 
+describe("tool prompt authoring skill discovery extension", () => {
+	test("discovers tool prompt authoring skill", async () => {
+		const handlers: Array<() => Promise<{ skillPaths?: string[] }>> = [];
+		const { default: toolPromptAuthoring } = await import(
+			"../extensions/skills/tool-prompt-authoring.ts"
+		);
+
+		toolPromptAuthoring({
+			on(eventName: string, handler: () => Promise<{ skillPaths?: string[] }>) {
+				if (eventName === "resources_discover") handlers.push(handler);
+			},
+		} as never);
+
+		expect(handlers).toHaveLength(1);
+		const result = await handlers[0]!();
+		const skillPaths = result.skillPaths ?? [];
+
+		expect(skillPaths).toEqual([resolve("skills/tool-prompt-authoring")]);
+		expect(skillPaths.every((path) => existsSync(path))).toBe(true);
+	});
+
+	test("agent development extension loads tool prompt authoring skill discovery", async () => {
+		const source = await readFile(resolve("extensions/agent-development/prompt-skills.ts"), "utf8");
+
+		expect(source).toContain('await load("../skills/tool-prompt-authoring.ts");');
+	});
+});
+
 describe("structured delegation skill discovery extension", () => {
 	test("discovers structured delegation skill", async () => {
 		const handlers: Array<() => Promise<{ skillPaths?: string[] }>> = [];

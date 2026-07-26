@@ -11,6 +11,7 @@ export default async function loadAgentDevelopmentSkills(pi: ExtensionAPI) {
 	const load = getExtensionLoader(pi).from(import.meta.url).load;
 
 	await load("../skills/experience-capture.ts");
+	await load("../skills/tool-prompt-authoring.ts");
 
 	pi.on("resources_discover", async () => {
 		return {
