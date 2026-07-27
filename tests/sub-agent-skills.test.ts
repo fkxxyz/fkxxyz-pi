@@ -330,6 +330,42 @@ export default {
 		}
 	});
 
+	test("loads systemPromptScript stdout relative to agents.ts", async () => {
+		lastResourceLoaderOptions = undefined;
+		const projectDir = join(tmpdir(), `pi-sub-agent-script-${Date.now()}`);
+		await mkdir(join(projectDir, ".pi", "prompts"), { recursive: true });
+		await writeFile(join(projectDir, ".pi", "prompts", "dynamic.txt"), "script prompt from cwd");
+		await writeFile(join(projectDir, ".pi", "dynamic-prompt.ts"), `
+const text = await Bun.file("./prompts/dynamic.txt").text();
+process.stdout.write(text);
+`);
+		await writeFile(join(projectDir, ".pi", "agents.ts"), `
+export default {
+  helper: {
+    description: "Script helper",
+    systemPromptScript: "./dynamic-prompt.ts"
+  }
+};
+`);
+
+		try {
+			const tool = await loadSubAgentExtension();
+			const result = await tool.execute(
+				"call-script-agent",
+				{ prompt: "do work", agent: "helper", project_path: projectDir, run_in_background: false },
+				undefined,
+				undefined,
+				{ cwd: process.cwd(), sessionManager: { getSessionFile: () => undefined } },
+			);
+
+			expect(JSON.parse(result.content[0].text)).toEqual({ session_id: expect.any(String), response: "done" });
+			const appended = lastResourceLoaderOptions.appendSystemPromptOverride([]).join("\n");
+			expect(appended).toContain("script prompt from cwd");
+		} finally {
+			await rm(projectDir, { recursive: true, force: true });
+		}
+	});
+
 	test("loads nested agents.ts catalog format without treating mainAgent as an agent", async () => {
 		lastResourceLoaderOptions = undefined;
 		const projectDir = join(tmpdir(), `pi-sub-agent-nested-catalog-${Date.now()}`);

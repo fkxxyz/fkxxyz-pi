@@ -123,6 +123,7 @@ Supported sources:
 - `systemPrompt`: inline prompt text.
 - `systemPromptFile`: single `.md` prompt path, absolute or relative to the defining `agents.ts`.
 - `systemPromptFiles`: multiple `.md` prompt paths, absolute or relative to the defining `agents.ts`; files are read in array order and joined with a blank line.
+- `systemPromptScript`: TypeScript script path, absolute or relative to the defining `agents.ts`; pi runs it with `bun` from the `agents.ts` directory and uses stdout exactly as the prompt.
 - `workspace`: workspace path whose own `.pi/settings.json`, extensions, skills, and system prompt rules define the child session; no agent-specific prompt block is injected.
 
 Markdown files under `~/pi/agents/` are no longer auto-registered. They can still be referenced explicitly with `systemPromptFile`.

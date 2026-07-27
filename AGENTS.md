@@ -139,7 +139,7 @@ export default {
 
 `mainAgent` names the agent prompt injected into normal parent sessions by the agent-runtime extension. The sub-agent extension filters that runtime extension out of child resource loaders, so child sessions do not receive the main agent prompt; they receive only the requested named sub-agent prompt. This separation prevents main-agent delegation instructions from recursively leaking into worker agents.
 
-Each agent entry should include a `description` for the parent agent and exactly one source after merge. `systemPromptFiles` counts as one source, not one source per file. The legacy flat shape remains valid for catalogs without a main agent:
+Each agent entry should include a `description` for the parent agent and exactly one source after merge. `systemPromptFiles` counts as one source, not one source per file. `systemPromptScript` executes local code, so use it only for trusted scripts that intentionally produce prompt text. The legacy flat shape remains valid for catalogs without a main agent:
 
 ```ts
 export default {
@@ -155,6 +155,7 @@ Supported sources are:
 - `systemPrompt` for inline prompt text.
 - `systemPromptFile` for a single Markdown prompt file path, absolute or relative to the defining `agents.ts`.
 - `systemPromptFiles` for multiple Markdown prompt file paths, absolute or relative to the defining `agents.ts`. Files are read in array order and joined with a blank line.
+- `systemPromptScript` for a TypeScript script path, absolute or relative to the defining `agents.ts`. Pi runs it with `bun` from the `agents.ts` directory and uses stdout exactly as the prompt.
 - `workspace` for a pi workspace path whose own settings, extensions, skills, and system prompt rules define the child session. Workspace agents do not receive an additional agent-specific prompt block.
 
 Markdown files under `~/pi/agents/` are prompt assets only when referenced explicitly; they are no longer auto-registered as agents. Keep the global `~/pi/agents.ts` focused on reusable default agents. Prefer project `.pi/agents.ts` for project-specific names and overrides.

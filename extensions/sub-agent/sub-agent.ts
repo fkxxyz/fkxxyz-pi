@@ -9,18 +9,21 @@ import {
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 
 const GLOBAL_AGENTS_FILE = join(homedir(), "pi", "agents.ts");
 const PROJECT_AGENTS_FILE = join(".pi", "agents.ts");
 const AGENT_RUNTIME_EXTENSION_SUFFIX = "/extensions/agent-runtime/agent-runtime.ts";
 const POLL_INTERVAL_MS = 1000;
 const MAX_DEPTH = 8;
+const SYSTEM_PROMPT_SCRIPT_MAX_BUFFER = 10 * 1024 * 1024;
 const SUB_AGENT_ID_EPOCH_MS = Date.UTC(2000, 0, 1);
 const SHORT_SESSION_ID_PATTERN = /^[0-9a-z]{1,9}_[0-9a-f]{8}$/;
 const SESSION_FILE_TIMESTAMP_PATTERN = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z_/;
@@ -48,6 +51,7 @@ type AgentDefinition = {
   systemPrompt?: string;
   systemPromptFile?: string;
   systemPromptFiles?: string[];
+  systemPromptScript?: string;
   workspace?: string;
 };
 
@@ -161,6 +165,7 @@ type SubAgentToolPayload =
 
 // Used only to pass recursion depth into auto-loaded nested extension instances.
 // The run registry itself intentionally stays inside each extension instance.
+const execFileAsync = promisify(execFile);
 const depthContext = new AsyncLocalStorage<number>();
 
 function notifyPiWebRunningChange() {
@@ -607,11 +612,12 @@ function isNonEmptyStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.length > 0 && value.every((item) => typeof item === "string" && item);
 }
 
-function countAgentSources(definition: { systemPrompt?: unknown; systemPromptFile?: unknown; systemPromptFiles?: unknown; workspace?: unknown }) {
+function countAgentSources(definition: { systemPrompt?: unknown; systemPromptFile?: unknown; systemPromptFiles?: unknown; systemPromptScript?: unknown; workspace?: unknown }) {
   return [
     typeof definition.systemPrompt === "string" && definition.systemPrompt,
     typeof definition.systemPromptFile === "string" && definition.systemPromptFile,
     isNonEmptyStringArray(definition.systemPromptFiles),
+    typeof definition.systemPromptScript === "string" && definition.systemPromptScript,
     typeof definition.workspace === "string" && definition.workspace,
   ].filter(Boolean).length;
 }
@@ -646,8 +652,13 @@ function normalizeAgentDefinition(name: string, raw: unknown, configPath: string
     return null;
   }
 
+  if (raw.systemPromptScript !== undefined && (typeof raw.systemPromptScript !== "string" || !raw.systemPromptScript)) {
+    diagnostics.push(`Agent "${name}" in ${configPath} must define systemPromptScript as a non-empty string`);
+    return null;
+  }
+
   if (countAgentSources(raw) > 1) {
-    diagnostics.push(`Agent "${name}" in ${configPath} must define at most one of systemPrompt, systemPromptFile, systemPromptFiles, or workspace`);
+    diagnostics.push(`Agent "${name}" in ${configPath} must define at most one of systemPrompt, systemPromptFile, systemPromptFiles, systemPromptScript, or workspace`);
     return null;
   }
 
@@ -659,6 +670,7 @@ function normalizeAgentDefinition(name: string, raw: unknown, configPath: string
     systemPrompt: typeof raw.systemPrompt === "string" ? raw.systemPrompt : undefined,
     systemPromptFile: typeof raw.systemPromptFile === "string" ? raw.systemPromptFile : undefined,
     systemPromptFiles: isNonEmptyStringArray(raw.systemPromptFiles) ? raw.systemPromptFiles : undefined,
+    systemPromptScript: typeof raw.systemPromptScript === "string" && raw.systemPromptScript ? raw.systemPromptScript : undefined,
     workspace: typeof raw.workspace === "string" ? raw.workspace : undefined,
   };
 }
@@ -676,6 +688,7 @@ function mergeAgentDefinition(base: AgentDefinition, override: AgentDefinition):
     merged.systemPrompt = override.systemPrompt;
     merged.systemPromptFile = override.systemPromptFile;
     merged.systemPromptFiles = override.systemPromptFiles;
+    merged.systemPromptScript = override.systemPromptScript;
     merged.workspace = override.workspace;
   }
   return merged;
@@ -736,7 +749,7 @@ async function loadAgentCatalog(projectPath: string): Promise<AgentCatalog> {
   for (const [name, definition] of [...agents]) {
     const sources = countAgentSources(definition);
     if (sources !== 1) {
-      diagnostics.push(`Agent "${name}" must define exactly one of systemPrompt, systemPromptFile, systemPromptFiles, or workspace after global/project merge`);
+      diagnostics.push(`Agent "${name}" must define exactly one of systemPrompt, systemPromptFile, systemPromptFiles, systemPromptScript, or workspace after global/project merge`);
       agents.delete(name);
     }
   }
@@ -761,7 +774,29 @@ async function resolveAgentSystemPrompt(agent: AgentDefinition): Promise<string 
     const prompts = await Promise.all(agent.systemPromptFiles.map((file) => readFile(resolveConfigPath(file, agent.baseDir), "utf8")));
     return prompts.join("\n\n");
   }
+  if (agent.systemPromptScript !== undefined) {
+    return runSystemPromptScript(resolveConfigPath(agent.systemPromptScript, agent.baseDir), agent.baseDir);
+  }
   return null;
+}
+
+async function runSystemPromptScript(scriptPath: string, cwd: string): Promise<string> {
+  try {
+    const result = await execFileAsync("bun", [scriptPath], {
+      cwd,
+      encoding: "utf8",
+      maxBuffer: SYSTEM_PROMPT_SCRIPT_MAX_BUFFER,
+    });
+    return result.stdout;
+  } catch (error) {
+    if (isPlainObject(error)) {
+      const status = typeof error.code === "number" || typeof error.code === "string" ? error.code : "unknown";
+      const stderr = typeof error.stderr === "string" && error.stderr ? `\nstderr:\n${error.stderr}` : "";
+      const stdout = typeof error.stdout === "string" && error.stdout ? `\nstdout:\n${error.stdout}` : "";
+      throw new Error(`systemPromptScript ${scriptPath} failed with exit status ${status}${stderr}${stdout}`);
+    }
+    throw error;
+  }
 }
 
 

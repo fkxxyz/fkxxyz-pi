@@ -109,6 +109,43 @@ export default {
     }
   });
 
+  test("injects the mainAgent prompt from systemPromptScript stdout", async () => {
+    const projectDir = join(tmpdir(), `pi-agent-runtime-main-script-${Date.now()}`);
+    await mkdir(join(projectDir, ".pi"), { recursive: true });
+    await writeFile(join(projectDir, ".pi", "dynamic-prompt.ts"), `
+process.stdout.write("main prompt from script");
+`);
+    await writeFile(join(projectDir, ".pi", "agents.ts"), `
+export default {
+  mainAgent: "main",
+  agents: {
+    main: {
+      description: "Main coordinator",
+      systemPromptScript: "./dynamic-prompt.ts"
+    }
+  }
+};
+`);
+
+    try {
+      const handlers: any[] = [];
+      const { default: agentRuntimeExtension } = await import("../extensions/agent-runtime/agent-runtime.ts");
+      agentRuntimeExtension({
+        on(eventName: string, handler: any) {
+          if (eventName === "before_agent_start") handlers.push(handler);
+        },
+        registerCommand() {},
+      } as never);
+
+      const result = await handlers[0]({ systemPrompt: "base prompt" }, { cwd: projectDir });
+
+      expect(result.systemPrompt).toContain('<agent_instructions agent="main" role="main"');
+      expect(result.systemPrompt).toContain("main prompt from script");
+    } finally {
+      await rm(projectDir, { recursive: true, force: true });
+    }
+  });
+
   test("active-agent session entry overrides mainAgent without injecting both prompts", async () => {
     const projectDir = join(tmpdir(), `pi-agent-runtime-active-${Date.now()}`);
     await mkdir(join(projectDir, ".pi"), { recursive: true });

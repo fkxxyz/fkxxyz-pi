@@ -61,12 +61,13 @@ export default {
 
 - Put project-local catalog at `<project>/.pi/agents.ts`.
 - Global `~/pi/agents.ts` loads first; project `.pi/agents.ts` loads second and can override/merge entries.
-- Every agent needs a non-empty `description` and exactly one source: `systemPrompt`, `systemPromptFile`, `systemPromptFiles`, or `workspace`.
-- Relative `systemPromptFile`, `systemPromptFiles`, and `workspace` paths resolve from the directory containing the defining `agents.ts`.
+- Every agent needs a non-empty `description` and exactly one source: `systemPrompt`, `systemPromptFile`, `systemPromptFiles`, `systemPromptScript`, or `workspace`.
+- Relative `systemPromptFile`, `systemPromptFiles`, `systemPromptScript`, and `workspace` paths resolve from the directory containing the defining `agents.ts`.
 - `systemPromptFiles` must be a non-empty array of strings. Files are read in array order and joined with a blank line.
+- `systemPromptScript` must be a non-empty string. Pi runs the TypeScript script with `bun` from the defining `agents.ts` directory and uses stdout exactly as the prompt. Use it only for trusted local scripts.
 - `mainAgent` must name an existing agent, but main agents are not offered as sub-agents.
 - Main agents need `agent-runtime`; named sub-agents need `sub-agent`, directly or through a preset.
 
 ## Validation
 
-After editing, verify `.pi/agents.ts` parses, referenced prompt files or workspace paths exist, `mainAgent` points to an existing entry, and no agent defines multiple sources.
+After editing, verify `.pi/agents.ts` parses, referenced prompt files, prompt scripts, or workspace paths exist, `mainAgent` points to an existing entry, and no agent defines multiple sources.
