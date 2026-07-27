@@ -192,7 +192,7 @@ function getCwd(ctx: unknown) {
 }
 
 function buildAgentSystemPrompt(base: string, agent: AgentDefinition, prompt: string, role: "main" | "active") {
-  return `${base}\n\n<agent_instructions agent="${agent.name}" role="${role}" source="${agent.configPath}">\n${prompt}\n</agent_instructions>`;
+  return `${base}\n\nYou are ${agent.name}. You are currently running as the ${role} workspace agent, interacting directly with the user. The following block defines your identity and behavior instructions.\n\n<agent_instructions agent="${agent.name}" role="${role}" source="${agent.configPath}">\n${prompt}\n</agent_instructions>`;
 }
 
 function getActiveAgentName(ctx: unknown): string | null | undefined {

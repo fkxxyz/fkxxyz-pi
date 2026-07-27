@@ -216,6 +216,8 @@ export default {
 
 			await sessionStartHandlers[0]({ type: "session_start", reason: "new" }, { cwd: projectDir });
 
+			expect(latestSubAgentTool().description).toContain("Agents this tool can start or continue as child sessions:");
+			expect(latestSubAgentTool().description).not.toContain("\nAvailable agents:");
 			expect(latestSubAgentTool().description).toContain("helper: Session cwd helper");
 			expect(latestSubAgentTool().parameters.agent.description).toContain("Available named agents: helper");
 		} finally {

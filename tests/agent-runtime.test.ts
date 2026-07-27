@@ -148,6 +148,9 @@ export default {
       });
 
       expect(result.systemPrompt).toContain('<agent_instructions agent="reviewer" role="active"');
+      expect(result.systemPrompt).toContain("You are reviewer. You are currently running as the active workspace agent, interacting directly with the user. The following block defines your identity and behavior instructions.");
+      expect(result.systemPrompt.indexOf("You are reviewer. You are currently running as the active workspace agent, interacting directly with the user. The following block defines your identity and behavior instructions.")).toBeLessThan(result.systemPrompt.indexOf('<agent_instructions agent="reviewer" role="active"'));
+      expect(result.systemPrompt.indexOf('<agent_instructions agent="reviewer" role="active"')).toBeLessThan(result.systemPrompt.indexOf("reviewer prompt"));
       expect(result.systemPrompt).toContain("reviewer prompt");
       expect(result.systemPrompt).not.toContain("main prompt");
     } finally {

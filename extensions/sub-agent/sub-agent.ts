@@ -1246,7 +1246,7 @@ Delegate independent tasks in parallel when this reduces elapsed time or parent-
 
 Keep work in the parent only when delegation would clearly add coordination cost without benefit, when the task requires continuous parent-level judgment, or when the next step is simply to wait for an already-running sub-agent result.
 
-Available agents:
+Agents this tool can start or continue as child sessions:
 ${availableAgents}
 
 Agent selection:
