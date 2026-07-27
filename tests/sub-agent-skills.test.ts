@@ -740,6 +740,38 @@ export default {
 		}
 	});
 
+	test("persists active-agent marker when creating a named sub-agent session", async () => {
+		const tool = await loadSubAgentExtension();
+		const projectDir = join(tmpdir(), `pi-sub-agent-active-agent-${Date.now()}`);
+		const sessionFile = join(projectDir, ".pi-agent", "sessions", "2026-07-12T00-00-00-000Z_019f5262-95f7-7785-bccc-150b1c6295c0.jsonl");
+		nextChildSessionFile = sessionFile;
+		await mkdir(join(projectDir, ".pi"), { recursive: true });
+		await writeFile(join(projectDir, ".pi", "agents.ts"), `
+export default {
+  helper: {
+    description: "Named helper",
+    systemPrompt: "helper prompt"
+  }
+};
+`);
+
+		try {
+			await tool.execute(
+				"call-active-agent-marker",
+				{ agent: "helper", prompt: "start", project_path: projectDir, run_in_background: true },
+				undefined,
+				undefined,
+				{ cwd: projectDir, sessionManager: { getSessionFile: () => undefined } },
+			);
+
+			const contents = await readFile(sessionFile, "utf8");
+			expect(contents).toContain('"customType":"active-agent"');
+			expect(contents).toContain('"name":"helper"');
+		} finally {
+			await rm(projectDir, { recursive: true, force: true });
+		}
+	});
+
 	test("reopens compact session ids by scanning the parent project session directory before global sessions", async () => {
 		const projectDir = join(tmpdir(), `pi-sub-agent-reopen-${Date.now()}`);
 		const agentDir = "/tmp/pi-agent-dir";

@@ -21,6 +21,7 @@ import { promisify } from "node:util";
 const GLOBAL_AGENTS_FILE = join(homedir(), "pi", "agents.ts");
 const PROJECT_AGENTS_FILE = join(".pi", "agents.ts");
 const AGENT_RUNTIME_EXTENSION_SUFFIX = "/extensions/agent-runtime/agent-runtime.ts";
+const ACTIVE_AGENT_ENTRY_TYPE = "active-agent";
 const POLL_INTERVAL_MS = 1000;
 const MAX_DEPTH = 8;
 const SYSTEM_PROMPT_SCRIPT_MAX_BUFFER = 10 * 1024 * 1024;
@@ -1163,6 +1164,9 @@ export default async function subAgentExtension(pi: ExtensionAPI) {
       depth: nextDepth,
       createdAt: new Date().toISOString(),
     });
+    if (effectiveRequestedAgent && agent && !agent.workspace) {
+      childSessionManager.appendCustomEntry(ACTIVE_AGENT_ENTRY_TYPE, { name: effectiveRequestedAgent });
+    }
     childSessionManager = await materializeNewSessionFile(childSessionManager);
 
     const sessionOptions: any = {
