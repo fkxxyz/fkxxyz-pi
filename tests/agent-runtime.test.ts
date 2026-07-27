@@ -19,6 +19,7 @@ describe("agent runtime main agent injector", () => {
       on(eventName: string, handler: () => Promise<{ skillPaths?: string[] }>) {
         if (eventName === "resources_discover") handlers.push(handler);
       },
+      registerCommand() {},
     } as never);
 
     expect(handlers).toHaveLength(1);
@@ -57,6 +58,7 @@ export default {
         on(eventName: string, handler: any) {
           if (eventName === "before_agent_start") handlers.push(handler);
         },
+        registerCommand() {},
       } as never);
 
       expect(handlers).toHaveLength(1);
@@ -95,12 +97,112 @@ export default {
         on(eventName: string, handler: any) {
           if (eventName === "before_agent_start") handlers.push(handler);
         },
+        registerCommand() {},
       } as never);
 
       const result = await handlers[0]({ systemPrompt: "base prompt" }, { cwd: projectDir });
 
       expect(result.systemPrompt).toContain('<agent_instructions agent="main" role="main"');
       expect(result.systemPrompt).toContain("first prompt\n\nsecond prompt");
+    } finally {
+      await rm(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test("active-agent session entry overrides mainAgent without injecting both prompts", async () => {
+    const projectDir = join(tmpdir(), `pi-agent-runtime-active-${Date.now()}`);
+    await mkdir(join(projectDir, ".pi"), { recursive: true });
+    await writeFile(join(projectDir, ".pi", "agents.ts"), `
+export default {
+  mainAgent: "main",
+  agents: {
+    main: {
+      description: "Main coordinator",
+      systemPrompt: "main prompt"
+    },
+    reviewer: {
+      description: "Reviewer",
+      systemPrompt: "reviewer prompt"
+    }
+  }
+};
+`);
+
+    try {
+      const handlers: any[] = [];
+      const { default: agentRuntimeExtension } = await import("../extensions/agent-runtime/agent-runtime.ts");
+      agentRuntimeExtension({
+        on(eventName: string, handler: any) {
+          if (eventName === "before_agent_start") handlers.push(handler);
+        },
+        registerCommand() {},
+      } as never);
+
+      const result = await handlers[0]({ systemPrompt: "base prompt" }, {
+        cwd: projectDir,
+        sessionManager: {
+          getEntries: () => [
+            { type: "custom", customType: "active-agent", data: { name: "reviewer" } },
+          ],
+        },
+      });
+
+      expect(result.systemPrompt).toContain('<agent_instructions agent="reviewer" role="active"');
+      expect(result.systemPrompt).toContain("reviewer prompt");
+      expect(result.systemPrompt).not.toContain("main prompt");
+    } finally {
+      await rm(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test("agent command persists selected agent in the current session", async () => {
+    const projectDir = join(tmpdir(), `pi-agent-runtime-command-${Date.now()}`);
+    await mkdir(join(projectDir, ".pi"), { recursive: true });
+    await writeFile(join(projectDir, ".pi", "agents.ts"), `
+export default {
+  mainAgent: "main",
+  agents: {
+    main: {
+      description: "Main coordinator",
+      systemPrompt: "main prompt"
+    },
+    reviewer: {
+      description: "Reviewer",
+      systemPrompt: "reviewer prompt"
+    }
+  }
+};
+`);
+
+    try {
+      const commands: Record<string, any> = {};
+      const entries: any[] = [];
+      const notifications: string[] = [];
+      const { default: agentRuntimeExtension } = await import("../extensions/agent-runtime/agent-runtime.ts");
+      agentRuntimeExtension({
+        on() {},
+        registerCommand(name: string, command: any) {
+          commands[name] = command;
+        },
+        appendEntry(customType: string, data: unknown) {
+          entries.push({ customType, data });
+        },
+      } as never);
+
+      expect(commands.agent).toBeDefined();
+
+      await commands.agent.handler("reviewer", {
+        cwd: projectDir,
+        ui: {
+          notify(message: string) {
+            notifications.push(message);
+          },
+        },
+        sessionManager: { getEntries: () => [] },
+      });
+
+      expect(entries).toEqual([{ customType: "active-agent", data: { name: "reviewer" } }]);
+      expect(notifications.at(-1)).toContain("reviewer");
     } finally {
       await rm(projectDir, { recursive: true, force: true });
     }
@@ -125,6 +227,7 @@ export default {
         on(eventName: string, handler: any) {
           if (eventName === "before_agent_start") handlers.push(handler);
         },
+        registerCommand() {},
       } as never);
 
       expect(await handlers[0]({ systemPrompt: "base prompt" }, { cwd: projectDir })).toBeUndefined();
