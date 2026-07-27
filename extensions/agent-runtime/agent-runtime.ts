@@ -17,6 +17,7 @@ type AgentDefinition = {
   baseDir: string;
   systemPrompt?: string;
   systemPromptFile?: string;
+  systemPromptFiles?: string[];
   workspace?: string;
 };
 
@@ -38,6 +39,19 @@ function resolveConfigPath(value: string, baseDir: string) {
   return isAbsolute(value) ? value : resolve(baseDir, value);
 }
 
+function isNonEmptyStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.length > 0 && value.every((item) => typeof item === "string" && item);
+}
+
+function countAgentSources(definition: { systemPrompt?: unknown; systemPromptFile?: unknown; systemPromptFiles?: unknown; workspace?: unknown }) {
+  return [
+    typeof definition.systemPrompt === "string" && definition.systemPrompt,
+    typeof definition.systemPromptFile === "string" && definition.systemPromptFile,
+    isNonEmptyStringArray(definition.systemPromptFiles),
+    typeof definition.workspace === "string" && definition.workspace,
+  ].filter(Boolean).length;
+}
+
 function normalizeAgentDefinition(name: string, raw: unknown, configPath: string, diagnostics: string[]): AgentDefinition | null {
   if (!isPlainObject(raw)) {
     diagnostics.push(`Agent "${name}" in ${configPath} must be an object`);
@@ -50,9 +64,13 @@ function normalizeAgentDefinition(name: string, raw: unknown, configPath: string
     return null;
   }
 
-  const sources = ["systemPrompt", "systemPromptFile", "workspace"].filter((key) => typeof raw[key] === "string" && raw[key]);
-  if (sources.length > 1) {
-    diagnostics.push(`Agent "${name}" in ${configPath} must define at most one of systemPrompt, systemPromptFile, or workspace`);
+  if (raw.systemPromptFiles !== undefined && !isNonEmptyStringArray(raw.systemPromptFiles)) {
+    diagnostics.push(`Agent "${name}" in ${configPath} must define systemPromptFiles as a non-empty string array`);
+    return null;
+  }
+
+  if (countAgentSources(raw) > 1) {
+    diagnostics.push(`Agent "${name}" in ${configPath} must define at most one of systemPrompt, systemPromptFile, systemPromptFiles, or workspace`);
     return null;
   }
 
@@ -63,6 +81,7 @@ function normalizeAgentDefinition(name: string, raw: unknown, configPath: string
     baseDir: dirname(configPath),
     systemPrompt: typeof raw.systemPrompt === "string" ? raw.systemPrompt : undefined,
     systemPromptFile: typeof raw.systemPromptFile === "string" ? raw.systemPromptFile : undefined,
+    systemPromptFiles: isNonEmptyStringArray(raw.systemPromptFiles) ? raw.systemPromptFiles : undefined,
     workspace: typeof raw.workspace === "string" ? raw.workspace : undefined,
   };
 }
@@ -73,13 +92,13 @@ function mergeAgentDefinition(base: AgentDefinition, override: AgentDefinition):
     name: override.name,
     description: override.description,
   };
-  const overrideSources = [override.systemPrompt, override.systemPromptFile, override.workspace]
-    .filter((value) => typeof value === "string" && value).length;
+  const overrideSources = countAgentSources(override);
   if (overrideSources > 0) {
     merged.configPath = override.configPath;
     merged.baseDir = override.baseDir;
     merged.systemPrompt = override.systemPrompt;
     merged.systemPromptFile = override.systemPromptFile;
+    merged.systemPromptFiles = override.systemPromptFiles;
     merged.workspace = override.workspace;
   }
   return merged;
@@ -141,10 +160,9 @@ async function loadAgentCatalog(projectPath: string): Promise<AgentCatalog> {
   }
 
   for (const [name, definition] of [...agents]) {
-    const sources = [definition.systemPrompt, definition.systemPromptFile, definition.workspace]
-      .filter((value) => typeof value === "string" && value).length;
+    const sources = countAgentSources(definition);
     if (sources !== 1) {
-      diagnostics.push(`Agent "${name}" must define exactly one of systemPrompt, systemPromptFile, or workspace after global/project merge`);
+      diagnostics.push(`Agent "${name}" must define exactly one of systemPrompt, systemPromptFile, systemPromptFiles, or workspace after global/project merge`);
       agents.delete(name);
     }
   }
@@ -160,6 +178,10 @@ async function resolveAgentSystemPrompt(agent: AgentDefinition): Promise<string 
   if (agent.systemPrompt !== undefined) return agent.systemPrompt;
   if (agent.systemPromptFile !== undefined) {
     return readFile(resolveConfigPath(agent.systemPromptFile, agent.baseDir), "utf8");
+  }
+  if (agent.systemPromptFiles !== undefined) {
+    const prompts = await Promise.all(agent.systemPromptFiles.map((file) => readFile(resolveConfigPath(file, agent.baseDir), "utf8")));
+    return prompts.join("\n\n");
   }
   return null;
 }

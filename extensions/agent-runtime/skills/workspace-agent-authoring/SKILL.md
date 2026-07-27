@@ -61,8 +61,9 @@ export default {
 
 - Put project-local catalog at `<project>/.pi/agents.ts`.
 - Global `~/pi/agents.ts` loads first; project `.pi/agents.ts` loads second and can override/merge entries.
-- Every agent needs a non-empty `description` and exactly one source: `systemPrompt`, `systemPromptFile`, or `workspace`.
-- Relative `systemPromptFile` and `workspace` paths resolve from the directory containing the defining `agents.ts`.
+- Every agent needs a non-empty `description` and exactly one source: `systemPrompt`, `systemPromptFile`, `systemPromptFiles`, or `workspace`.
+- Relative `systemPromptFile`, `systemPromptFiles`, and `workspace` paths resolve from the directory containing the defining `agents.ts`.
+- `systemPromptFiles` must be a non-empty array of strings. Files are read in array order and joined with a blank line.
 - `mainAgent` must name an existing agent, but main agents are not offered as sub-agents.
 - Main agents need `agent-runtime`; named sub-agents need `sub-agent`, directly or through a preset.
 

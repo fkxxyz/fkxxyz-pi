@@ -295,6 +295,39 @@ export default {
 		}
 	});
 
+	test("loads systemPromptFiles relative to agents.ts in order", async () => {
+		lastResourceLoaderOptions = undefined;
+		const projectDir = join(tmpdir(), `pi-sub-agent-files-${Date.now()}`);
+		await mkdir(join(projectDir, ".pi", "prompts"), { recursive: true });
+		await writeFile(join(projectDir, ".pi", "prompts", "one.md"), "first prompt");
+		await writeFile(join(projectDir, ".pi", "prompts", "two.md"), "second prompt");
+		await writeFile(join(projectDir, ".pi", "agents.ts"), `
+export default {
+  helper: {
+    description: "File helper",
+    systemPromptFiles: ["./prompts/one.md", "./prompts/two.md"]
+  }
+};
+`);
+
+		try {
+			const tool = await loadSubAgentExtension();
+			const result = await tool.execute(
+				"call-files-agent",
+				{ prompt: "do work", agent: "helper", project_path: projectDir, run_in_background: false },
+				undefined,
+				undefined,
+				{ cwd: process.cwd(), sessionManager: { getSessionFile: () => undefined } },
+			);
+
+			expect(JSON.parse(result.content[0].text)).toEqual({ session_id: expect.any(String), response: "done" });
+			const appended = lastResourceLoaderOptions.appendSystemPromptOverride([]).join("\n");
+			expect(appended).toContain("first prompt\n\nsecond prompt");
+		} finally {
+			await rm(projectDir, { recursive: true, force: true });
+		}
+	});
+
 	test("loads nested agents.ts catalog format without treating mainAgent as an agent", async () => {
 		lastResourceLoaderOptions = undefined;
 		const projectDir = join(tmpdir(), `pi-sub-agent-nested-catalog-${Date.now()}`);

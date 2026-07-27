@@ -121,7 +121,8 @@ export default {
 Supported sources:
 
 - `systemPrompt`: inline prompt text.
-- `systemPromptFile`: `.md` prompt path, absolute or relative to the defining `agents.ts`.
+- `systemPromptFile`: single `.md` prompt path, absolute or relative to the defining `agents.ts`.
+- `systemPromptFiles`: multiple `.md` prompt paths, absolute or relative to the defining `agents.ts`; files are read in array order and joined with a blank line.
 - `workspace`: workspace path whose own `.pi/settings.json`, extensions, skills, and system prompt rules define the child session; no agent-specific prompt block is injected.
 
 Markdown files under `~/pi/agents/` are no longer auto-registered. They can still be referenced explicitly with `systemPromptFile`.

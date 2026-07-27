@@ -71,6 +71,41 @@ export default {
     }
   });
 
+  test("injects the mainAgent prompt from multiple files in order", async () => {
+    const projectDir = join(tmpdir(), `pi-agent-runtime-main-files-${Date.now()}`);
+    await mkdir(join(projectDir, ".pi", "prompts"), { recursive: true });
+    await writeFile(join(projectDir, ".pi", "prompts", "one.md"), "first prompt");
+    await writeFile(join(projectDir, ".pi", "prompts", "two.md"), "second prompt");
+    await writeFile(join(projectDir, ".pi", "agents.ts"), `
+export default {
+  mainAgent: "main",
+  agents: {
+    main: {
+      description: "Main coordinator",
+      systemPromptFiles: ["./prompts/one.md", "./prompts/two.md"]
+    }
+  }
+};
+`);
+
+    try {
+      const handlers: any[] = [];
+      const { default: agentRuntimeExtension } = await import("../extensions/agent-runtime/agent-runtime.ts");
+      agentRuntimeExtension({
+        on(eventName: string, handler: any) {
+          if (eventName === "before_agent_start") handlers.push(handler);
+        },
+      } as never);
+
+      const result = await handlers[0]({ systemPrompt: "base prompt" }, { cwd: projectDir });
+
+      expect(result.systemPrompt).toContain('<agent_instructions agent="main" role="main"');
+      expect(result.systemPrompt).toContain("first prompt\n\nsecond prompt");
+    } finally {
+      await rm(projectDir, { recursive: true, force: true });
+    }
+  });
+
   test("does nothing when .pi/agents.ts has no mainAgent", async () => {
     const projectDir = join(tmpdir(), `pi-agent-runtime-no-main-${Date.now()}`);
     await mkdir(join(projectDir, ".pi"), { recursive: true });
