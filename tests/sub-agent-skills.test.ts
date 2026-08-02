@@ -415,6 +415,51 @@ export default {
 		}
 	});
 
+	test("loads dynamically generated agents.ts catalog", async () => {
+		lastResourceLoaderOptions = undefined;
+		const projectDir = join(tmpdir(), `pi-sub-agent-dynamic-catalog-${Date.now()}`);
+		await mkdir(join(projectDir, ".pi"), { recursive: true });
+		await writeFile(join(projectDir, ".pi", "agents.ts"), `
+export default function defineAgents(ctx) {
+  return {
+    mainAgent: "main",
+    agents: {
+      main: {
+        description: "Dynamic main",
+        systemPrompt: "dynamic main prompt"
+      },
+      helper: {
+        description: "Dynamic helper from " + ctx.scope,
+        systemPrompt: "dynamic helper prompt from " + ctx.baseDir
+      }
+    }
+  };
+}
+`);
+
+		try {
+			await loadSubAgentExtension();
+			await sessionStartHandlers[0]({ type: "session_start", reason: "new" }, { cwd: projectDir });
+			const tool = latestSubAgentTool();
+
+			expect(tool.description).toContain("helper: Dynamic helper from project");
+			expect(tool.description).not.toContain("main: Dynamic main");
+
+			await tool.execute(
+				"call-dynamic-agent",
+				{ prompt: "do work", agent: "helper", project_path: projectDir, run_in_background: false },
+				undefined,
+				undefined,
+				{ cwd: process.cwd(), sessionManager: { getSessionFile: () => undefined } },
+			);
+
+			const appended = lastResourceLoaderOptions.appendSystemPromptOverride([]).join("\n");
+			expect(appended).toContain("dynamic helper prompt from " + join(projectDir, ".pi"));
+		} finally {
+			await rm(projectDir, { recursive: true, force: true });
+		}
+	});
+
 	test("filters the main agent runtime extension from child resource loaders", async () => {
 		lastResourceLoaderOptions = undefined;
 		const projectDir = join(tmpdir(), `pi-sub-agent-filter-runtime-${Date.now()}`);

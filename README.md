@@ -87,7 +87,7 @@ The sub-agent extension loads named agents from TypeScript index files instead o
 
 The global index loads first. A project's `.pi/agents.ts` loads second and shallow-merges same-name agents over the global entry, so a project can override only fields such as `description` while inheriting the prompt source.
 
-Agent indexes support both the legacy flat shape and a structured catalog shape. Use the structured shape when a workspace needs a first-class main agent:
+Agent indexes may directly export a catalog object or export a sync/async function that returns a catalog object. Use a function when the available agents or `mainAgent` must be derived from local state; it receives `{ cwd, configPath, baseDir, scope }`. Returned catalogs support both the legacy flat shape and a structured catalog shape. Use the structured shape when a workspace needs a first-class main agent:
 
 ```ts
 export default {
@@ -116,6 +116,22 @@ export default {
     systemPromptFile: "./prompts/helper.md",
   },
 };
+```
+
+Dynamic catalogs return the same shapes:
+
+```ts
+export default async function agents(ctx) {
+  return {
+    mainAgent: "main",
+    agents: {
+      main: {
+        description: "Primary workspace coordinator",
+        systemPromptFile: "./prompts/main.md",
+      },
+    },
+  };
+}
 ```
 
 Supported sources:

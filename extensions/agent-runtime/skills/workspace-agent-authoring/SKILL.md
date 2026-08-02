@@ -61,6 +61,7 @@ export default {
 
 - Put project-local catalog at `<project>/.pi/agents.ts`.
 - Global `~/pi/agents.ts` loads first; project `.pi/agents.ts` loads second and can override/merge entries.
+- `.pi/agents.ts` may export a catalog object directly or export a sync/async function that returns one. Use a function only when agents or `mainAgent` need local-state-derived generation. The function receives `{ cwd, configPath, baseDir, scope }` and should use `ctx.cwd` or `ctx.baseDir` instead of `process.cwd()` for workspace-local discovery.
 - Every agent needs a non-empty `description` and exactly one source: `systemPrompt`, `systemPromptFile`, `systemPromptFiles`, `systemPromptScript`, or `workspace`.
 - Relative `systemPromptFile`, `systemPromptFiles`, `systemPromptScript`, and `workspace` paths resolve from the directory containing the defining `agents.ts`.
 - `systemPromptFiles` must be a non-empty array of strings. Files are read in array order and joined with a blank line.
