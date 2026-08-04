@@ -285,6 +285,59 @@ export default {
     }
   });
 
+  test("agent command shows descriptions in interactive selection", async () => {
+    const projectDir = join(tmpdir(), `pi-agent-runtime-command-select-${Date.now()}`);
+    await mkdir(join(projectDir, ".pi"), { recursive: true });
+    await writeFile(join(projectDir, ".pi", "agents.ts"), `
+export default {
+  mainAgent: "main",
+  agents: {
+    main: {
+      description: "Main coordinator",
+      systemPrompt: "main prompt"
+    },
+    reviewer: {
+      description: "Focused code reviewer",
+      systemPrompt: "reviewer prompt"
+    }
+  }
+};
+`);
+
+    try {
+      const commands: Record<string, any> = {};
+      const entries: any[] = [];
+      let selectOptions: string[] = [];
+      const { default: agentRuntimeExtension } = await import("../extensions/agent-runtime/agent-runtime.ts");
+      agentRuntimeExtension({
+        on() {},
+        registerCommand(name: string, command: any) {
+          commands[name] = command;
+        },
+        appendEntry(customType: string, data: unknown) {
+          entries.push({ customType, data });
+        },
+      } as never);
+
+      await commands.agent.handler("", {
+        cwd: projectDir,
+        ui: {
+          select(_title: string, options: string[]) {
+            selectOptions = options;
+            return "reviewer — Focused code reviewer";
+          },
+          notify() {},
+        },
+        sessionManager: { getEntries: () => [] },
+      });
+
+      expect(selectOptions).toEqual(["default", "main — Main coordinator", "reviewer — Focused code reviewer"]);
+      expect(entries).toEqual([{ customType: "active-agent", data: { name: "reviewer" } }]);
+    } finally {
+      await rm(projectDir, { recursive: true, force: true });
+    }
+  });
+
   test("does nothing when .pi/agents.ts has no mainAgent", async () => {
     const projectDir = join(tmpdir(), `pi-agent-runtime-no-main-${Date.now()}`);
     await mkdir(join(projectDir, ".pi"), { recursive: true });

@@ -42,6 +42,10 @@ function getSwitchableAgents(catalog: AgentCatalog) {
   return [...catalog.agents.values()].filter((agent) => !agent.workspace);
 }
 
+function formatAgentChoice(agent: AgentDefinition) {
+  return `${agent.name} — ${agent.description}`;
+}
+
 function notify(ctx: unknown, message: string, level: "info" | "warning" | "error" = "info") {
   if (isPlainObject(ctx) && isPlainObject(ctx.ui) && typeof ctx.ui.notify === "function") {
     ctx.ui.notify(message, level);
@@ -114,10 +118,11 @@ export default function agentRuntimeExtension(pi: ExtensionAPI) {
           notify(ctx, "Usage: /agent <name|status|list|default|off>", "info");
           return;
         }
-        const choices = ["default", ...switchableAgents.map((agent) => agent.name)];
+        const agentChoices = new Map(switchableAgents.map((agent) => [formatAgentChoice(agent), agent.name]));
+        const choices = ["default", ...agentChoices.keys()];
         const choice = await ctx.ui.select("Select active agent for this session", choices);
         if (!choice) return;
-        selectedName = choice;
+        selectedName = agentChoices.get(choice) ?? choice;
       }
 
       if (selectedName === "default") {
