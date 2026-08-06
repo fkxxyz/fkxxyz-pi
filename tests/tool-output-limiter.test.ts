@@ -50,6 +50,33 @@ function extractPath(text: string) {
 	return match[1]!;
 }
 
+function repeatToLength(seed: string, length: number): string {
+	let output = "";
+	while (output.length < length) output += seed;
+	return output.slice(0, length);
+}
+
+function repeatedMachineLog(length: number): string {
+	let output = "";
+	for (let index = 0; output.length < length; index++) {
+		output += `2026-08-06 14:${String(index % 60).padStart(2, "0")}:${String((index * 7) % 60).padStart(2, "0")}.123 WARN builder retrying unchanged task package=app shard=${index % 17} file=/repo/src/module${index % 13}.ts\n`;
+	}
+	return output.slice(0, length);
+}
+
+function encodedHighEntropy(length: number): string {
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	let output = "";
+	for (let index = 0; output.length < length; index++) {
+		output += alphabet[(index * 37 + index * index * 17) % alphabet.length];
+	}
+	return output.slice(0, length);
+}
+
+function lossyBinaryText(length: number): string {
+	return repeatToLength("\uFFFD\u0000\u0001\u0002binary-fragment-", length);
+}
+
 describe("tool output limiter", () => {
 	test("leaves short tool output unchanged", async () => {
 		const result = await runLimiter({
@@ -107,5 +134,41 @@ describe("tool output limiter", () => {
 		const defaultPreset = await readFileSync(resolve("extensions/entrypoints/default-preset.json"), "utf8");
 
 		expect(defaultPreset).toContain("../tool-output/tool-output-limiter.ts");
+	});
+
+	test("allows existing readable long documentation instead of truncating it", async () => {
+		const original = [
+			await readFile(resolve("AGENTS.md"), "utf8"),
+			await readFile(resolve("extensions/tool-output/entropy-aware-limiting-design.md"), "utf8"),
+		].join("\n\n");
+		const result = await runLimiter({
+			toolName: "read",
+			toolCallId: "call_readable_doc",
+			content: [{ type: "text", text: original }],
+			isError: false,
+		});
+
+		expect(original.length).toBeGreaterThan(25_600);
+		expect(result).toBeUndefined();
+	});
+
+	test("continues truncating compact synthetic noise classes", async () => {
+		const samples = [
+			{ name: "low entropy", text: "A".repeat(30_000) },
+			{ name: "repeated machine log", text: repeatedMachineLog(30_000) },
+			{ name: "encoded high entropy", text: encodedHighEntropy(30_000) },
+			{ name: "lossy binary text", text: lossyBinaryText(30_000) },
+		];
+
+		for (const sample of samples) {
+			const result = await runLimiter({
+				toolName: "bash",
+				toolCallId: `call_${sample.name}`,
+				content: [{ type: "text", text: sample.text }],
+				isError: false,
+			});
+
+			expect(result?.content?.[0]?.text, sample.name).toContain("Tool output was too long");
+		}
 	});
 });

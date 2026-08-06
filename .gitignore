@@ -23,3 +23,6 @@ node_modules/
 *.pfx
 *.sqlite
 *.db
+
+# generated calibration data
+/tests/generated/
