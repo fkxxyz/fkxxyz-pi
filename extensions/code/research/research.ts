@@ -5,4 +5,5 @@ export default async function codeResearch(pi: ExtensionAPI) {
 	const load = getExtensionLoader(pi).from(import.meta.url).load;
 
 	await load("./exa-mcp.ts");
+	await load("./markitdown-mcp.ts");
 }

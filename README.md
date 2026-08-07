@@ -40,6 +40,9 @@ Then replace placeholder values with local values:
   "exaMcp": {
     "url": "https://exa.example.local/mcp"
   },
+  "markitdownMcp": {
+    "url": "http://127.0.0.1:3001/mcp/"
+  },
   "projectDirectories": {
     "thirdPartyRepos": "/path/to/src",
     "thirdPartyRepoExample": "/path/to/src/vendor/repo",
@@ -55,6 +58,7 @@ Current `.env.json` consumers:
 
 - `extensions/interaction/markdown-preview-links.ts` uses `markdownPreview.baseUrl`.
 - `extensions/code/research/exa-mcp.ts` uses `exaMcp.url`.
+- `extensions/code/research/markitdown-mcp.ts` uses `markitdownMcp.url`.
 - `extensions/code/environment/project-directory-rules.ts` uses `projectDirectories.*`.
 
 ## Local Symlinks

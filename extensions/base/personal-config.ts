@@ -8,6 +8,9 @@ export type PersonalConfig = {
 	exaMcp?: {
 		url?: string;
 	};
+	markitdownMcp?: {
+		url?: string;
+	};
 	autoSessionName?: {
 		provider?: string;
 		model?: string;
