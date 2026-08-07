@@ -7,7 +7,7 @@ describe("frontend development skill discovery extension", () => {
 	test("discovers frontend development skills", async () => {
 		const handlers: Array<() => Promise<{ skillPaths?: string[] }>> = [];
 		const { default: frontendDevelopment } = await import(
-			"../extensions/code/frontend-development.ts"
+			"../extensions/code/frontend/frontend-development.ts"
 		);
 
 		frontendDevelopment({
@@ -29,7 +29,7 @@ describe("frontend development skill discovery extension", () => {
 	});
 
 	test("code extension loads frontend development skill discovery", async () => {
-		const source = await readFile(resolve("extensions/code/code.ts"), "utf8");
+		const source = await readFile(resolve("extensions/code/frontend/frontend.ts"), "utf8");
 
 		expect(source).toContain('await load("./frontend-development.ts");');
 	});

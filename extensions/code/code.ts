@@ -4,19 +4,10 @@ import { getExtensionLoader } from "../base/extension-loader.ts";
 export default async function code(pi: ExtensionAPI) {
 	const load = getExtensionLoader(pi).from(import.meta.url).load;
 
-	await load("../skills/brainstorming.ts");
-	await load("../skills/test-driven-development.ts");
-	await load("../skills/structured-delegation.ts");
-	await load("../reasoning/reasoning.ts");
-	await load("../exa/exa-mcp.ts");
-	await load("../agent-runtime/agent-runtime.ts");
-	await load("../sub-agent/sub-agent.ts");
-	await load("./apply-patch.ts");
-	await load("./lsp-tools.ts");
-	await load("./frontend-development.ts");
-	await load("./systematic-debugging.ts");
-	await load("../tool-policy/read-with-line-numbers.ts");
-	await load("../environment/shared-skill-discovery.ts");
-	await load("../environment/arch-package-management.ts");
-	await load("../environment/project-directory-rules.ts");
+	await load("./tools/tools.ts");
+	await load("./agents/agents.ts");
+	await load("./methodology/methodology.ts");
+	await load("./research/research.ts");
+	await load("./frontend/frontend.ts");
+	await load("./environment/environment.ts");
 }

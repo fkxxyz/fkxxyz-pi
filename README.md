@@ -6,7 +6,7 @@ This repository stores a personal pi workflow library: reusable extensions, pres
 
 - `.pi/` contains configuration for the special root maintenance workspace.
 - `AGENTS.md` documents repository-specific guidance loaded by the root maintenance workspace.
-- `agents.ts` is the global sub-agent index used by `extensions/sub-agent/sub-agent.ts`.
+- `agents.ts` is the global sub-agent index used by `extensions/code/agents/sub-agent.ts`.
 - `extensions/` contains reusable pi extensions grouped by purpose.
 - `extensions/entrypoints/` contains composition entrypoints that load reusable extensions through the shared loader.
 - `extensions/base/` contains shared infrastructure, such as the extension loader and personal config reader.
@@ -54,8 +54,8 @@ If `.env.json` is missing, invalid, or missing a required field, the affected ex
 Current `.env.json` consumers:
 
 - `extensions/interaction/markdown-preview-links.ts` uses `markdownPreview.baseUrl`.
-- `extensions/exa/exa-mcp.ts` uses `exaMcp.url`.
-- `extensions/environment/project-directory-rules.ts` uses `projectDirectories.*`.
+- `extensions/code/research/exa-mcp.ts` uses `exaMcp.url`.
+- `extensions/code/environment/project-directory-rules.ts` uses `projectDirectories.*`.
 
 ## Local Symlinks
 
@@ -105,7 +105,7 @@ export default {
 };
 ```
 
-`mainAgent` is injected into normal parent sessions by `extensions/agent-runtime/agent-runtime.ts`. Child sessions created by the sub-agent extension filter that runtime extension from their resource loader, so sub-agents receive only their requested named-agent prompt and not the main agent prompt.
+`mainAgent` is injected into normal parent sessions by `extensions/code/agents/agent-runtime.ts`. Child sessions created by the sub-agent extension filter that runtime extension from their resource loader, so sub-agents receive only their requested named-agent prompt and not the main agent prompt.
 
 Each agent needs a `description` for parent-agent selection and exactly one source after merge. The legacy flat shape is still valid:
 
@@ -201,14 +201,14 @@ Useful workspaces include:
 
 ## Important Extensions
 
-- `extensions/code/code.ts` composes the main coding workflow extensions.
+- `extensions/code/code.ts` composes the main coding workflow extensions through focused subcategory entrypoints.
 - `extensions/interaction/interaction.ts` composes interaction style and progress-message extensions.
-- `extensions/reasoning/reasoning.ts` composes reasoning guidance extensions.
-- `extensions/sub-agent/sub-agent.ts` adds delegated sub-agent tools.
-- `extensions/exa/exa-mcp.ts` bridges Exa MCP tools when `exaMcp.url` is configured.
+- `extensions/code/methodology/reasoning.ts` composes reasoning guidance extensions.
+- `extensions/code/agents/sub-agent.ts` adds delegated sub-agent tools.
+- `extensions/code/research/exa-mcp.ts` bridges Exa MCP tools when `exaMcp.url` is configured.
 - `extensions/system-prompt/simplify-system-prompt.ts` simplifies pi's default prompt and blocks image inputs.
 - `extensions/tool-policy/disable-basic-tools.ts` removes and hard-blocks the built-in `bash`, `read`, `edit`, and `write` tools.
-- `extensions/tool-policy/read-with-line-numbers.ts` overrides `read` so text output includes 1-based line numbers while preserving offset/limit continuation hints.
+- `extensions/code/tools/read-with-line-numbers.ts` overrides `read` so text output includes 1-based line numbers while preserving offset/limit continuation hints.
 
 ## Git Hygiene
 

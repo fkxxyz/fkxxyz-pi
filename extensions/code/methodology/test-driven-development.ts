@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const TEST_DRIVEN_DEVELOPMENT_SKILL_PATHS = [
-	"../../skills/superpowers/test-driven-development",
+	"../../../skills/superpowers/test-driven-development",
 ].map((path) => fileURLToPath(new URL(path, import.meta.url)));
 
 export default function loadTestDrivenDevelopmentSkill(pi: ExtensionAPI) {

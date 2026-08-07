@@ -50,8 +50,8 @@ describe("disable default system prompt extension", () => {
 
     expect(settings.extensions).toEqual([
       "../../../extensions/system-prompt/disable-default-system-prompt.ts",
-      "../../../extensions/agent-runtime/agent-runtime.ts",
-      "../../../extensions/sub-agent/sub-agent.ts",
+      "../../../extensions/code/agents/agent-runtime.ts",
+      "../../../extensions/code/agents/sub-agent.ts",
       "../../../extensions/tool-policy/disable-basic-tools.ts",
     ]);
   });

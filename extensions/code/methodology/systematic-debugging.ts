@@ -1,14 +1,14 @@
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const STRUCTURED_DELEGATION_SKILL_PATHS = [
-	"../../skills/structured-delegation",
+const SYSTEMATIC_DEBUGGING_SKILL_PATHS = [
+	"../../../skills/superpowers/systematic-debugging",
 ].map((path) => fileURLToPath(new URL(path, import.meta.url)));
 
-export default function loadStructuredDelegationSkill(pi: ExtensionAPI) {
+export default function discoverSystematicDebuggingSkill(pi: ExtensionAPI) {
 	pi.on("resources_discover", async () => {
 		return {
-			skillPaths: STRUCTURED_DELEGATION_SKILL_PATHS,
+			skillPaths: SYSTEMATIC_DEBUGGING_SKILL_PATHS,
 		};
 	});
 }

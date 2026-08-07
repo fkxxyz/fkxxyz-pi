@@ -7,7 +7,7 @@ describe("systematic debugging skill discovery extension", () => {
 	test("discovers systematic debugging skill", async () => {
 		const handlers: Array<() => Promise<{ skillPaths?: string[] }>> = [];
 		const { default: systematicDebugging } = await import(
-			"../extensions/code/systematic-debugging.ts"
+			"../extensions/code/methodology/systematic-debugging.ts"
 		);
 
 		systematicDebugging({
@@ -25,7 +25,7 @@ describe("systematic debugging skill discovery extension", () => {
 	});
 
 	test("code extension loads systematic debugging skill discovery", async () => {
-		const source = await readFile(resolve("extensions/code/code.ts"), "utf8");
+		const source = await readFile(resolve("extensions/code/methodology/methodology.ts"), "utf8");
 
 		expect(source).toContain('await load("./systematic-debugging.ts");');
 	});

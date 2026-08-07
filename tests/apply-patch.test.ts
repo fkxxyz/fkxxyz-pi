@@ -27,7 +27,7 @@ beforeEach(async () => {
 			String: (schema: unknown) => schema,
 		},
 	}));
-	const { default: applyPatchExtension } = await import("../extensions/code/apply-patch.ts");
+	const { default: applyPatchExtension } = await import("../extensions/code/tools/apply-patch.ts");
 	applyPatchExtension({
 		registerTool(definition: RegisteredTool) {
 			registered = definition;

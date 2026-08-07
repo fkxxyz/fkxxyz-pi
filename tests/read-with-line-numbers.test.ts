@@ -35,7 +35,7 @@ beforeEach(async () => {
 			Optional: (schema: unknown) => schema,
 		},
 	}));
-	const { default: numberedReadExtension } = await import("../extensions/tool-policy/read-with-line-numbers.ts");
+	const { default: numberedReadExtension } = await import("../extensions/code/tools/read-with-line-numbers.ts");
 	numberedReadExtension({
 		registerTool(definition: RegisteredTool) {
 			registered = definition;
@@ -81,10 +81,10 @@ describe("read-with-line-numbers tool policy", () => {
 	});
 
 	test("code extension loads the read override but default preset does not", async () => {
-		const codeSource = await readFile(resolve("extensions/code/code.ts"), "utf8");
+		const codeSource = await readFile(resolve("extensions/code/tools/tools.ts"), "utf8");
 		const defaultPreset = await readFile(resolve("extensions/entrypoints/default-preset.json"), "utf8");
 
-		expect(codeSource).toContain('await load("../tool-policy/read-with-line-numbers.ts");');
+		expect(codeSource).toContain('await load("./read-with-line-numbers.ts");');
 		expect(defaultPreset).not.toContain("read-with-line-numbers.ts");
 	});
 });

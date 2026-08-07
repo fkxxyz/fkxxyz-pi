@@ -1,0 +1,12 @@
+{
+  "extensions": [
+    "../../../extensions/system-prompt/disable-default-system-prompt.ts",
+    "../../../extensions/code/agents/agent-runtime.ts",
+    "../../../extensions/code/agents/sub-agent.ts",
+    "../../../extensions/tool-policy/disable-basic-tools.ts"
+  ],
+  "enableSkillCommands": false,
+  "compaction": {
+    "enabled": true
+  }
+}

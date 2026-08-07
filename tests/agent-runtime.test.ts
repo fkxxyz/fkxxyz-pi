@@ -6,14 +6,14 @@ import { tmpdir } from "node:os";
 
 describe("agent runtime main agent injector", () => {
   test("code extension loads agent runtime", async () => {
-    const source = await readFile(resolve("extensions/code/code.ts"), "utf8");
+    const source = await readFile(resolve("extensions/code/agents/agents.ts"), "utf8");
 
-    expect(source).toContain('await load("../agent-runtime/agent-runtime.ts");');
+    expect(source).toContain('await load("./agent-runtime.ts");');
   });
 
   test("discovers the bundled workspace agent authoring skill", async () => {
     const handlers: Array<() => Promise<{ skillPaths?: string[] }>> = [];
-    const { default: agentRuntimeExtension } = await import("../extensions/agent-runtime/agent-runtime.ts");
+    const { default: agentRuntimeExtension } = await import("../extensions/code/agents/agent-runtime.ts");
 
     agentRuntimeExtension({
       on(eventName: string, handler: () => Promise<{ skillPaths?: string[] }>) {
@@ -25,7 +25,7 @@ describe("agent runtime main agent injector", () => {
     expect(handlers).toHaveLength(1);
     const result = await handlers[0]!();
     const skillPaths = result.skillPaths ?? [];
-    const skillPath = resolve("extensions/agent-runtime/skills/workspace-agent-authoring");
+    const skillPath = resolve("extensions/code/agents/skills/workspace-agent-authoring");
 
     expect(skillPaths).toEqual([skillPath]);
     expect(existsSync(join(skillPath, "SKILL.md"))).toBe(true);
@@ -53,7 +53,7 @@ export default {
 
     try {
       const handlers: any[] = [];
-      const { default: agentRuntimeExtension } = await import("../extensions/agent-runtime/agent-runtime.ts");
+      const { default: agentRuntimeExtension } = await import("../extensions/code/agents/agent-runtime.ts");
       agentRuntimeExtension({
         on(eventName: string, handler: any) {
           if (eventName === "before_agent_start") handlers.push(handler);
@@ -92,7 +92,7 @@ export default {
 
     try {
       const handlers: any[] = [];
-      const { default: agentRuntimeExtension } = await import("../extensions/agent-runtime/agent-runtime.ts");
+      const { default: agentRuntimeExtension } = await import("../extensions/code/agents/agent-runtime.ts");
       agentRuntimeExtension({
         on(eventName: string, handler: any) {
           if (eventName === "before_agent_start") handlers.push(handler);
@@ -129,7 +129,7 @@ export default {
 
     try {
       const handlers: any[] = [];
-      const { default: agentRuntimeExtension } = await import("../extensions/agent-runtime/agent-runtime.ts");
+      const { default: agentRuntimeExtension } = await import("../extensions/code/agents/agent-runtime.ts");
       agentRuntimeExtension({
         on(eventName: string, handler: any) {
           if (eventName === "before_agent_start") handlers.push(handler);
@@ -165,7 +165,7 @@ export default async function defineAgents(ctx) {
 
     try {
       const handlers: any[] = [];
-      const { default: agentRuntimeExtension } = await import("../extensions/agent-runtime/agent-runtime.ts");
+      const { default: agentRuntimeExtension } = await import("../extensions/code/agents/agent-runtime.ts");
       agentRuntimeExtension({
         on(eventName: string, handler: any) {
           if (eventName === "before_agent_start") handlers.push(handler);
@@ -204,7 +204,7 @@ export default {
 
     try {
       const handlers: any[] = [];
-      const { default: agentRuntimeExtension } = await import("../extensions/agent-runtime/agent-runtime.ts");
+      const { default: agentRuntimeExtension } = await import("../extensions/code/agents/agent-runtime.ts");
       agentRuntimeExtension({
         on(eventName: string, handler: any) {
           if (eventName === "before_agent_start") handlers.push(handler);
@@ -255,7 +255,7 @@ export default {
       const commands: Record<string, any> = {};
       const entries: any[] = [];
       const notifications: string[] = [];
-      const { default: agentRuntimeExtension } = await import("../extensions/agent-runtime/agent-runtime.ts");
+      const { default: agentRuntimeExtension } = await import("../extensions/code/agents/agent-runtime.ts");
       agentRuntimeExtension({
         on() {},
         registerCommand(name: string, command: any) {
@@ -308,7 +308,7 @@ export default {
       const commands: Record<string, any> = {};
       const entries: any[] = [];
       let selectOptions: string[] = [];
-      const { default: agentRuntimeExtension } = await import("../extensions/agent-runtime/agent-runtime.ts");
+      const { default: agentRuntimeExtension } = await import("../extensions/code/agents/agent-runtime.ts");
       agentRuntimeExtension({
         on() {},
         registerCommand(name: string, command: any) {
@@ -352,7 +352,7 @@ export default {
 
     try {
       const handlers: any[] = [];
-      const { default: agentRuntimeExtension } = await import("../extensions/agent-runtime/agent-runtime.ts");
+      const { default: agentRuntimeExtension } = await import("../extensions/code/agents/agent-runtime.ts");
       agentRuntimeExtension({
         on(eventName: string, handler: any) {
           if (eventName === "before_agent_start") handlers.push(handler);

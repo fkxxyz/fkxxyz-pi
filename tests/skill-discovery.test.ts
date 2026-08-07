@@ -69,7 +69,7 @@ describe("structured delegation skill discovery extension", () => {
 	test("discovers structured delegation skill", async () => {
 		const handlers: Array<() => Promise<{ skillPaths?: string[] }>> = [];
 		const { default: structuredDelegation } = await import(
-			"../extensions/skills/structured-delegation.ts"
+			"../extensions/code/agents/structured-delegation.ts"
 		);
 
 		structuredDelegation({
@@ -87,8 +87,8 @@ describe("structured delegation skill discovery extension", () => {
 	});
 
 	test("code extension loads structured delegation skill discovery", async () => {
-		const source = await readFile(resolve("extensions/code/code.ts"), "utf8");
+		const source = await readFile(resolve("extensions/code/agents/agents.ts"), "utf8");
 
-		expect(source).toContain('await load("../skills/structured-delegation.ts");');
+		expect(source).toContain('await load("./structured-delegation.ts");');
 	});
 });

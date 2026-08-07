@@ -5,7 +5,7 @@ import {
 	warnInvalidPersonalConfig,
 	warnMissingPersonalConfig,
 	warnMissingPersonalConfigValue,
-} from "../base/personal-config.ts";
+} from "../../../base/personal-config.ts";
 
 function projectDirectoryContext(options: {
 	thirdPartyRepos: string;

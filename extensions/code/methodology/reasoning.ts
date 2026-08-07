@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { getExtensionLoader } from "../base/extension-loader.ts";
+import { getExtensionLoader } from "../../base/extension-loader.ts";
 
 export default async function reasoning(pi: ExtensionAPI) {
 	const load = getExtensionLoader(pi).from(import.meta.url).load;

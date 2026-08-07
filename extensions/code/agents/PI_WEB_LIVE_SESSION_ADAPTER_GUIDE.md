@@ -8,7 +8,7 @@ Pi Web has a separate live-session path. It lists historical sessions from JSONL
 
 Without this adapter, a newly materialized child session can appear in the Pi Web sidebar while it is still running, but opening it shows only the persisted snapshot. The view does not receive the child session's live `message_update` events until the assistant response has been fully persisted and the browser refreshes or reopens the session.
 
-This guide documents the compatibility workaround used by `extensions/sub-agent/sub-agent.ts` and how to maintain it safely.
+This guide documents the compatibility workaround used by `extensions/code/agents/sub-agent.ts` and how to maintain it safely.
 
 ## Verified Pi Web Version
 
@@ -85,7 +85,7 @@ Important route dependencies:
 
 ## Implementation Notes
 
-The adapter is implemented inside `extensions/sub-agent/sub-agent.ts` as a small compatibility layer:
+The adapter is implemented inside `extensions/code/agents/sub-agent.ts` as a small compatibility layer:
 
 - `registerPiWebLiveSession(run)` creates a wrapper around the child `AgentSession`.
 - The wrapper forwards child `AgentSession.subscribe(...)` events to Pi Web listeners.

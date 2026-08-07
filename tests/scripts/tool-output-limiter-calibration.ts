@@ -76,7 +76,7 @@ const docs = [
 	.filter((content): content is Uint8Array => Boolean(content));
 
 if (docs.length) writeSample("allow_real_docs.md", Buffer.concat(docs));
-const source = maybeRead("/home/fkxxyz/pi/extensions/code/lsp-tools.ts", 120_000);
+const source = maybeRead("/home/fkxxyz/pi/extensions/code/tools/lsp-tools.ts", 120_000);
 if (source) writeSample("allow_real_source.ts", source);
 const pacmanLog = maybeRead("/var/log/pacman.log");
 if (pacmanLog) writeSample("truncate_real_pacman.log", pacmanLog);

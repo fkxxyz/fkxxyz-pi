@@ -176,7 +176,7 @@ async function loadSubAgentExtension(activeTools: string[] = []) {
 	resolveNextPromptBlocker = undefined;
 	delete (globalThis as any).__piSessions;
 	delete (globalThis as any).__piRunningListeners;
-	const { default: subAgentExtension } = await import("../extensions/sub-agent/sub-agent.ts");
+	const { default: subAgentExtension } = await import("../extensions/code/agents/sub-agent.ts");
 	await subAgentExtension({
 		on(eventName: string, handler: any) {
 			if (eventName === "session_start") sessionStartHandlers.push(handler);
@@ -484,8 +484,8 @@ export default {
 			);
 
 			const agentRuntimeExtension = {
-				path: "../../../extensions/agent-runtime/agent-runtime.ts",
-				resolvedPath: resolve("extensions/agent-runtime/agent-runtime.ts"),
+				path: "../../../extensions/code/agents/agent-runtime.ts",
+				resolvedPath: resolve("extensions/code/agents/agent-runtime.ts"),
 			};
 			const otherExtension = {
 				path: "../../../extensions/tool-policy/disable-basic-tools.ts",
@@ -948,7 +948,7 @@ export default {
 describe("sub-agent skill discovery", () => {
 	test("does not expose legacy subagent skills", async () => {
 		const handlers: Array<() => Promise<{ skillPaths?: string[] }>> = [];
-		const { default: subAgentExtension } = await import("../extensions/sub-agent/sub-agent.ts");
+		const { default: subAgentExtension } = await import("../extensions/code/agents/sub-agent.ts");
 
 		await subAgentExtension({
 			on(eventName: string, handler: () => Promise<{ skillPaths?: string[] }>) {

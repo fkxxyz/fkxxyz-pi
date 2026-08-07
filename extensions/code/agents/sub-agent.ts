@@ -13,10 +13,10 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { AgentCatalog, AgentDefinition } from "../agent-runtime/agent-catalog.ts";
-import { loadAgentCatalog, resolveAgentSystemPrompt, resolveConfigPath } from "../agent-runtime/agent-catalog.ts";
+import type { AgentCatalog, AgentDefinition } from "./agent-catalog.ts";
+import { loadAgentCatalog, resolveAgentSystemPrompt, resolveConfigPath } from "./agent-catalog.ts";
 
-const AGENT_RUNTIME_EXTENSION_SUFFIX = "/extensions/agent-runtime/agent-runtime.ts";
+const AGENT_RUNTIME_EXTENSION_SUFFIX = "/extensions/code/agents/agent-runtime.ts";
 const ACTIVE_AGENT_ENTRY_TYPE = "active-agent";
 const POLL_INTERVAL_MS = 1000;
 const MAX_DEPTH = 8;
