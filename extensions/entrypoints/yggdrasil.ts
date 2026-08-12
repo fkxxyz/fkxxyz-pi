@@ -4,6 +4,7 @@ import { getExtensionLoader } from "../base/extension-loader.ts";
 export default async function yggdrasil(pi: ExtensionAPI) {
 	const load = getExtensionLoader(pi).from(import.meta.url).load;
 
+	await load("/home/fkxxyz/pro/fkxxyz/cclover-yggdrasil/adapters/pi/entrypoint/index.ts");
 	await load("../system-prompt/simplify-system-prompt.ts");
 	await load("../system-prompt/load-agents-md.ts");
 	await load("../interaction/interaction.ts");
