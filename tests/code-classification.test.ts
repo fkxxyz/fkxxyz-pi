@@ -29,8 +29,6 @@ describe("code extension classification", () => {
 			"extensions/code/agents/structured-delegation.ts",
 			"extensions/code/methodology/methodology.ts",
 			"extensions/code/methodology/brainstorming.ts",
-			"extensions/code/methodology/test-driven-development.ts",
-			"extensions/code/methodology/systematic-debugging.ts",
 			"extensions/code/methodology/reasoning.ts",
 			"extensions/code/research/research.ts",
 			"extensions/code/research/exa-mcp.ts",

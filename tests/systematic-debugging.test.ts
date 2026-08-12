@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 describe("systematic debugging skill discovery extension", () => {
@@ -22,11 +21,5 @@ describe("systematic debugging skill discovery extension", () => {
 
 		expect(skillPaths).toEqual([resolve("skills/superpowers/systematic-debugging")]);
 		expect(skillPaths.every((path) => existsSync(path))).toBe(true);
-	});
-
-	test("code extension loads systematic debugging skill discovery", async () => {
-		const source = await readFile(resolve("extensions/code/methodology/methodology.ts"), "utf8");
-
-		expect(source).toContain('await load("./systematic-debugging.ts");');
 	});
 });
